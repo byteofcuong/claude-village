@@ -101,6 +101,8 @@ const hash = (s: string) => createHash('sha256').update(s).digest('hex').slice(0
 export const houseId = (dir: string) => hash(`house:${dir}`);
 
 const baseName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+/** What Claude Code would name the project folder for this path, in lower case since Windows mixes the drive letter's. */
+const folderKey = (cwd: string) => cwd.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
 
 /** Compared case-insensitively with unified slashes, as Windows paths must be. */
 export function isTempCwd(cwd: string, tempRoots: string[]): boolean {
@@ -192,15 +194,27 @@ export class VillageModel {
     }
     const liveOf = (p: Project, s: Session) => (liveCopy.get(s.sessionId)?.dir === p.dir ? live.get(s.sessionId) : undefined);
 
+    // A session can move into another project, so its cwd alone does not say whose folder this is.
+    // The folder's own name does, and a session working where the folder says wins over a newer one.
+    const folders = new Map(projectList.map((p) => [p.dir.toLowerCase(), p.dir] as const));
+
     for (const p of projectList) {
       const sessions = [...p.sessions.values()];
-      const latest = sessions.reduce<Session | null>((m, s) => (s.cwd && (!m || s.mtime > m.mtime) ? s : m), null);
+      const atHome = (s: Session) => !!s.cwd && folderKey(s.cwd) === p.dir.toLowerCase();
+      const latest = sessions.reduce<Session | null>((m, s) => {
+        if (!s.cwd) return m;
+        if (!m) return s;
+        if (atHome(s) !== atHome(m)) return atHome(s) ? s : m;
+        return s.mtime > m.mtime ? s : m;
+      }, null);
       const id = houseId(p.dir);
       const lastAt = sessions.reduce((m, s) => Math.max(m, s.mtime, s.lastAt), 0);
       const anyLive = sessions.some((s) => liveOf(p, s));
       const cwd = latest?.cwd ?? null;
       const temp = cwd ? isTempCwd(cwd, tempRoots) : false;
-      const isHouse = !!cwd && !temp && sessions.some((s) => s.hasPrompt) && cwdExists(cwd) && (anyLive || now - lastAt < HOUSE_DAYS * DAY);
+      // Nobody here works at home and the work is in a project that has its own folder: they live there.
+      const owner = cwd && !temp && latest && !atHome(latest) ? folders.get(folderKey(cwd)) : undefined;
+      const isHouse = !!cwd && !temp && !owner && sessions.some((s) => s.hasPrompt) && cwdExists(cwd) && (anyLive || now - lastAt < HOUSE_DAYS * DAY);
       if (isHouse && cwd) {
         const name = baseName(cwd) || 'project';
         eligible.push({ id, name, at: lastAt, live: anyLive });
@@ -211,10 +225,10 @@ export class VillageModel {
         const sessionTemp = s.cwd ? isTempCwd(s.cwd, tempRoots) : temp;
         const recent = now - Math.max(s.lastAt, s.mtime) < VILLAGER_HOURS * 3_600_000;
         if (sessionTemp && !entry) continue;
-        if (!sessionTemp && !isHouse) continue;
+        if (!sessionTemp && !isHouse && !owner) continue;
         if (!entry && !recent) continue;
         if (!s.hasPrompt && !entry) continue;
-        const home = sessionTemp ? null : id;
+        const home = sessionTemp ? null : owner ? houseId(owner) : id;
         if (sessionTemp) tentUsed = true;
         const sid = hash(`session:${p.dir}/${s.sessionId}`);
         const dto = toDTO(s, sid, 'session', null, sessionState(s, entry, now), s.cwd && !sessionTemp ? baseName(s.cwd) : 'Session tạm');

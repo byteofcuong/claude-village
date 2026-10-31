@@ -48,6 +48,32 @@ describe('junk houses', () => {
     expect(snap.houses[0]?.villagers[0]?.state).toBe('idle');
   });
 
+  describe('a session that moved into another project', () => {
+    const folderOf = (cwd: string) => cwd.replace(/[^a-zA-Z0-9]/g, '-');
+    let other: string;
+    beforeEach(async () => {
+      other = join(root, 'projects', 'other-app');
+      await mkdir(other, { recursive: true });
+    });
+
+    it('does not rename the house it started in', async () => {
+      await writeSession(home, folderOf(real), uuid(1), [rec.prompt(NOW - 9000, real)]);
+      await age(await writeSession(home, folderOf(other), uuid(2), [rec.prompt(NOW - 8000, other)]), 1);
+      const moved = await writeSession(home, folderOf(other), uuid(3), [rec.prompt(NOW - 1000, real)]);
+      await utimes(moved, new Date(NOW), new Date(NOW));
+      const snap = await new Scanner(opts()).poll();
+      expect(snap.houses.map((h) => h.name).sort()).toEqual(['my-app', 'other-app']);
+    });
+
+    it('joins the real house when its folder has no session of its own', async () => {
+      await writeSession(home, folderOf(real), uuid(1), [rec.prompt(NOW - 9000, real)]);
+      await writeSession(home, 'folder-of-a-deleted-project', uuid(2), [rec.prompt(NOW - 1000, real)]);
+      const snap = await new Scanner(opts()).poll();
+      expect(snap.houses.map((h) => h.name)).toEqual(['my-app']);
+      expect(snap.houses[0]?.villagers).toHaveLength(2);
+    });
+  });
+
   it('never reads a UNC cwd', () => {
     expect(isUnc('\\\\server\\share')).toBe(true);
     expect(isUnc('//server/share')).toBe(true);
