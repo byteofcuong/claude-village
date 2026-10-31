@@ -21,15 +21,28 @@ await page.waitForFunction(() => window.__stats?.ready, null, { timeout: 60000 }
 await page.waitForTimeout(30000);
 const sample = () => page.evaluate(() => ({ mb: Math.round(performance.memory.usedJSHeapSize / 1048576), fps: window.__stats.fps }));
 const samples = [await sample()];
+console.log(JSON.stringify(samples[0]));
 const steps = Math.max(1, Math.round(minutes));
-for (let i = 0; i < steps; i++) {
-  await page.waitForTimeout(60000);
-  samples.push(await sample());
+let interrupted = false;
+try {
+  for (let i = 0; i < steps; i++) {
+    await page.waitForTimeout(60000);
+    samples.push(await sample());
+    console.log(JSON.stringify(samples[samples.length - 1]));
+  }
+} catch (e) {
+  // A closed window ends the run but says nothing about the village: keep what was measured.
+  interrupted = true;
+  console.log(`interrupted: ${String(e).split('\n')[0]}`);
 }
-console.log(JSON.stringify(samples));
 const first = samples[0], last = samples[samples.length - 1];
-console.log(`heap ${first.mb} MB -> ${last.mb} MB over ${steps} min, fps ${first.fps} -> ${last.fps}, errors ${errors.length}`);
+console.log(`heap ${first.mb} MB -> ${last.mb} MB over ${samples.length - 1} of ${steps} min, fps ${first.fps} -> ${last.fps}, errors ${errors.length}`);
 await browser.close();
 server.kill();
 rmSync(home, { recursive: true, force: true });
-process.exit(errors.length || last.mb > first.mb * 1.5 ? 1 : 0);
+// The heap saws up and down between collections, so two single samples prove nothing: a leak raises the floor.
+const span = Math.max(1, Math.floor(samples.length / 4));
+const floor = (part) => Math.min(...part.map((s) => s.mb));
+const startFloor = floor(samples.slice(0, span)), endFloor = floor(samples.slice(-span));
+console.log(`heap floor ${startFloor} MB -> ${endFloor} MB`);
+process.exit(interrupted ? 2 : errors.length || endFloor > startFloor * 1.5 ? 1 : 0);
