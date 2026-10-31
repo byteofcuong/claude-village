@@ -4,6 +4,7 @@ import type { VillageSnapshot, VillagerDTO } from '../shared/types.js';
 import { loadAssets } from './assets.js';
 import { Cats } from './cats.js';
 import { demoSnapshot } from './demo.js';
+import { Dragons } from './dragons.js';
 import { Panel } from './panel.js';
 import { DayNight } from './sky.js';
 import { Village, bobOf, type Isle } from './village.js';
@@ -150,6 +151,7 @@ const assets = await loadAssets((done, total) => { loading.textContent = `Đang 
 const village = new Village(assets, scene, sky.night, time, softDot('rgba(255,225,170,1)', 'rgba(255,150,70,.42)'));
 const people = new People(assets, scene);
 const cats = new Cats(assets, scene);
+const dragons = new Dragons(assets, scene);
 clouds();
 drifters();
 
@@ -308,7 +310,9 @@ function tick(): void {
   fallTime.value = elapsed;
   village.update(elapsed);
   people.update(dt, elapsed, camera);
-  cats.update(dt, elapsed, village.isles(), people.feet());
+  const isles = village.isles(), feet = people.feet();
+  cats.update(dt, elapsed, isles, feet);
+  dragons.update(dt, elapsed, isles, feet);
   pond.position.y = -0.09 + bobOf(elapsed, -1);
   // Shadows follow the slow sun and only need a refresh now and then.
   if (village.dirty || count < 4 || count % 90 === 0) {
@@ -365,6 +369,7 @@ if (debug) {
     const p = new THREE.Vector3(isle.x, isle.y + isle.shape.heightAt(isle.R * 0.6, isle.R * 0.2), isle.z).add(new THREE.Vector3(isle.R * 0.6, 0, isle.R * 0.2)).project(camera);
     return { x: ((p.x + 1) / 2) * innerWidth, y: ((1 - p.y) / 2) * innerHeight, wx: isle.x, wz: isle.z };
   };
+  (window as unknown as { __dragons: unknown }).__dragons = () => dragons.states();
   // For scripts/walk.mjs: who is standing inside a solid model right now.
   (window as unknown as { __inside: unknown }).__inside = () => {
     const spots = people.feet();

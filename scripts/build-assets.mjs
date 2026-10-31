@@ -16,7 +16,8 @@ const anim = join(src, 'KayKit_Character_Animations_1.1', 'KayKit_Character_Anim
 const nature = join(src, 'Quaternius_Nature', 'glTF');
 const village = join(src, 'WizP_Village', 'VillagePack.glb');
 const cat = join(src, 'Vuena_Pets', 'GLB', 'animal_cat.glb');
-for (const need of [adv, anim, nature, village, cat]) {
+const dragon = join(src, 'Ashwing_Drake_Lite', 'Ashwing_Drake_Lite', 'Ashwing_Drake_Lite.glb');
+for (const need of [adv, anim, nature, village, cat, dragon]) {
   if (!existsSync(need)) {
     console.error(`Missing source pack: ${need}\nSee assets/LICENSES.md.`);
     process.exit(2);
@@ -24,7 +25,7 @@ for (const need of [adv, anim, nature, village, cat]) {
 }
 
 rmSync(out, { recursive: true, force: true });
-for (const d of ['chars', 'anims', 'props', 'nature', 'village', 'cats']) mkdirSync(join(out, d), { recursive: true });
+for (const d of ['chars', 'anims', 'props', 'nature', 'village', 'cats', 'dragons']) mkdirSync(join(out, d), { recursive: true });
 
 await MeshoptSimplifier.ready;
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
@@ -64,7 +65,7 @@ for (const p of ['axe_1handed', 'spellbook_open', 'mug_full', 'staff']) {
 
 // Nature: normal maps removed, textures shrunk, the heavier trees simplified.
 const NATURE = {
-  CommonTree_3: 1700, CommonTree_5: 1700, Pine_5: 1300,
+  CommonTree_3: 1000, CommonTree_5: 1000, Pine_5: 1300,
   Fern_1: 0, Clover_1: 0, Clover_2: 0, Flower_3_Single: 0, Grass_Common_Short: 0,
   Rock_Medium_1: 0, Rock_Medium_2: 0, Pebble_Square_4: 0, Plant_1: 0,
 };
@@ -78,7 +79,7 @@ for (const [name, target] of Object.entries(NATURE)) {
   }
   const before = tris(doc);
   const steps = [weld()];
-  if (target && before > target) steps.push(simplify({ simplifier: MeshoptSimplifier, ratio: target / before, error: 0.2 }));
+  if (target && before > target) steps.push(simplify({ simplifier: MeshoptSimplifier, ratio: target / before, error: 0.35 }));
   await doc.transform(...steps, prune({ keepLeaves: true, keepAttributes: true }), dedup(), textureCompress({ encoder: sharp, targetFormat: 'webp', resize: [768, 768], quality: 82 }));
   await io.write(join(out, 'nature', `${name}.glb`), doc);
   report[`nature:${name}`] = tris(doc);
@@ -94,9 +95,23 @@ for (const m of catDoc.getRoot().listMaterials()) {
   m.setRoughnessFactor(1);
 }
 await catDoc.transform(prune({ keepLeaves: true, keepAttributes: true }));
-await catDoc.transform(weld(), simplify({ simplifier: MeshoptSimplifier, ratio: 1000 / tris(catDoc), error: 0.03 }), textureCompress({ encoder: sharp, targetFormat: 'webp', resize: [512, 512], quality: 86 }));
+await catDoc.transform(weld(), simplify({ simplifier: MeshoptSimplifier, ratio: 800 / tris(catDoc), error: 0.03 }), textureCompress({ encoder: sharp, targetFormat: 'webp', resize: [512, 512], quality: 86 }));
 await io.write(join(out, 'cats', 'cat.glb'), catDoc);
 report.cat = tris(catDoc);
+
+// The dragon: simplified to fit the budget, with its normal map kept so the scales still read.
+const dragonDoc = await io.read(dragon);
+for (const m of dragonDoc.getRoot().listMeshes()) for (const p of m.listPrimitives()) for (const t of p.listTargets()) t.dispose();
+for (const clip of dragonDoc.getRoot().listAnimations()) if (clip.getName() === 'bite') clip.dispose();
+for (const m of dragonDoc.getRoot().listMaterials()) {
+  m.setMetallicRoughnessTexture(null);
+  m.setMetallicFactor(0);
+  m.setRoughnessFactor(0.72);
+}
+await dragonDoc.transform(prune({ keepLeaves: true, keepAttributes: true }));
+await dragonDoc.transform(weld(), simplify({ simplifier: MeshoptSimplifier, ratio: 4500 / tris(dragonDoc), error: 0.03 }), textureCompress({ encoder: sharp, targetFormat: 'webp', resize: [1024, 1024], quality: 84 }));
+await io.write(join(out, 'dragons', 'dragon.glb'), dragonDoc);
+report.dragon = tris(dragonDoc);
 
 const v = await io.read(village);
 const vb = tris(v);
