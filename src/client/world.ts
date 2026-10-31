@@ -225,6 +225,32 @@ export function bubbleTexture(symbol: string): THREE.Texture {
   return t;
 }
 
+export function speechTexture(text: string): { texture: THREE.Texture; aspect: number } {
+  const c = document.createElement('canvas');
+  const x = c.getContext('2d');
+  if (!x) throw new Error('2D canvas is unavailable');
+  const font = '600 30px "Segoe UI",system-ui,sans-serif';
+  x.font = font;
+  const w = Math.ceil(x.measureText(text).width) + 40, body = 56;
+  c.width = w;
+  c.height = body + 14;
+  x.font = font;
+  x.fillStyle = 'rgba(255,253,245,0.96)';
+  x.beginPath();
+  x.roundRect(0, 0, w, body, 22);
+  x.fill();
+  x.beginPath();
+  x.moveTo(w / 2 - 10, body - 1); x.lineTo(w / 2 + 10, body - 1); x.lineTo(w / 2, body + 13);
+  x.fill();
+  x.fillStyle = '#28323c';
+  x.textAlign = 'center';
+  x.textBaseline = 'middle';
+  x.fillText(text, w / 2, body / 2 + 1);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return { texture: t, aspect: w / (body + 14) };
+}
+
 export function labelTexture(text: string): { texture: THREE.Texture; aspect: number } {
   const c = document.createElement('canvas');
   const x = c.getContext('2d');

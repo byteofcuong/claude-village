@@ -20,7 +20,7 @@ npm run assets
 npm start
 ```
 
-Mở `http://127.0.0.1:4717`. Kéo để xoay, cuộn để phóng to, click vào người dân để xem chi tiết. Nút "Tua nhanh một ngày" xem cả ngày trong 3 phút.
+Mở `http://127.0.0.1:4717`. Kéo để xoay, cuộn để phóng to, click vào người dân để xem chi tiết. Click vào đảo nào thì camera bay tới đảo đó và người dân sẽ nói chuyện; bấm "Xem toàn làng" hoặc Esc để quay lại. Nút "Tua nhanh một ngày" xem cả ngày trong 3 phút.
 
 Muốn xem thử không cần session thật: `http://127.0.0.1:4717/?demo=stress`.
 
@@ -41,6 +41,10 @@ Muốn xem thử không cần session thật: `http://127.0.0.1:4717/?demo=stres
 | Process đã tắt | Nằm ngủ 💤 |
 
 "Đang chờ bạn duyệt quyền" chưa có tín hiệu đáng tin nên chưa hiển thị riêng.
+
+Vài con mèo nhiều màu thỉnh thoảng ghé một đảo ngẫu nhiên, đi dạo, ngồi, ngủ rồi đi chỗ khác. Mèo chỉ để cho vui, không ứng với session nào.
+
+Lời thoại được viết sẵn theo từng loại việc, cùng lắm chèn tên file hoặc mô tả ngắn đã có trong bảng chi tiết. Prompt và lệnh không bao giờ lên lời thoại.
 
 ## Kiểm tra
 
@@ -64,4 +68,8 @@ node scripts/e2e.mjs
 npm run perf
 ```
 
-`e2e` và `perf` mở Microsoft Edge có giao diện.
+```bash
+node scripts/walk.mjs
+```
+
+`e2e`, `perf` và `walk` mở Microsoft Edge có giao diện. `walk` theo dõi xem có ai đứng trong vật cứng không.

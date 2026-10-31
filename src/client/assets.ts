@@ -4,7 +4,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 export interface Part { geometry: THREE.BufferGeometry; material: THREE.Material; matrix: THREE.Matrix4 }
-export interface Model { parts: Part[]; height: number; footprint: number; minY: number }
+export interface Model { parts: Part[]; height: number; footprint: number; minY: number; sizeX: number; sizeZ: number }
 export interface CharacterKind { name: string; scene: THREE.Object3D; height: number; variants: THREE.MeshStandardMaterial[] }
 export interface Assets {
   nature: Map<string, Model>;
@@ -13,6 +13,7 @@ export interface Assets {
   characters: CharacterKind[];
   clips: Map<string, THREE.AnimationClip>;
   props: Map<string, THREE.Object3D>;
+  cat: { scene: THREE.Object3D; clips: Map<string, THREE.AnimationClip>; height: number; variants: THREE.Material[] };
   leaf: { pink: Map<THREE.Texture, THREE.Texture>; gold: Map<THREE.Texture, THREE.Texture> };
 }
 
@@ -31,7 +32,7 @@ function modelOf(root: THREE.Object3D): Model {
     const material = Array.isArray(m.material) ? m.material[0] : m.material;
     if (material) parts.push({ geometry: m.geometry, material, matrix: toOrigin.clone().multiply(m.matrixWorld) });
   });
-  return { parts, height: size.y, footprint: Math.max(size.x, size.z), minY: 0 };
+  return { parts, height: size.y, footprint: Math.max(size.x, size.z), minY: 0, sizeX: size.x, sizeZ: size.z };
 }
 
 function hsl(image: CanvasImageSource & { width: number; height: number }, fn: (h: { h: number; s: number; l: number }) => { h: number; s: number; l: number } | null, base: THREE.Texture, maxSize = 512): THREE.Texture {
@@ -71,7 +72,7 @@ const VILLAGE = ['building_1', 'building_3', 'shop', 'shrine', 'arch_2', 'brazie
 const CLOTH: [number, number][] = [[0.62, 0.55], [0.04, 0.55], [0.48, 0.45], [0.12, 0.65]];
 
 export async function loadAssets(onProgress: (done: number, total: number) => void): Promise<Assets> {
-  const total = NATURE.length + 1 + 6 + 4 + 4;
+  const total = NATURE.length + 1 + 6 + 4 + 4 + 1;
   let done = 0;
   const tick = <T>(p: Promise<T>) => p.then((v) => { onProgress(++done, total); return v; });
 
@@ -136,6 +137,32 @@ export async function loadAssets(onProgress: (done: number, total: number) => vo
   const props = new Map<string, THREE.Object3D>();
   await Promise.all(['axe_1handed', 'spellbook_open', 'mug_full', 'staff'].map((p) => tick(loader.loadAsync(`props/${p}.glb`)).then((g) => { props.set(p, g.scene); })));
 
+  const catFile = await tick(loader.loadAsync('cats/cat.glb'));
+  catFile.scene.updateMatrixWorld(true);
+  let catMaterial: THREE.MeshStandardMaterial | null = null;
+  catFile.scene.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) catMaterial = (o as THREE.SkinnedMesh).material as THREE.MeshStandardMaterial; });
+  if (!catMaterial) throw new Error('Cat did not load');
+  const catBase: THREE.MeshStandardMaterial = catMaterial;
+  const catMap = catBase.map;
+  // The fur is orange in the file; eyes, nose and whites keep their colours.
+  const fur = (h: { h: number; s: number; l: number }) => h.h < 0.16 && h.s > 0.2;
+  const coat = (next: (h: { h: number; s: number; l: number }) => { h: number; s: number; l: number }) => {
+    const m = catBase.clone();
+    if (catMap) m.map = hsl(imageOf(catMap), (h) => (fur(h) ? next(h) : null), catMap);
+    return m;
+  };
+  const cat = {
+    scene: catFile.scene,
+    clips: new Map(catFile.animations.map((c) => [c.name, c] as const)),
+    height: new THREE.Box3().setFromObject(catFile.scene).getSize(new THREE.Vector3()).y,
+    variants: [
+      catBase,
+      coat((h) => ({ h: 0.09, s: 0.1, l: Math.min(0.97, h.l + 0.42) })),
+      coat((h) => ({ h: 0.62, s: 0.14, l: h.l * 0.42 })),
+      coat((h) => ({ h: 0.6, s: 0.1, l: h.l * 0.72 })),
+    ],
+  };
+
   // Blossom and apricot canopies come from the same leaves, recoloured.
   const leaf = { pink: new Map<THREE.Texture, THREE.Texture>(), gold: new Map<THREE.Texture, THREE.Texture>() };
   for (const model of nature.values()) for (const part of model.parts) {
@@ -144,5 +171,5 @@ export async function loadAssets(onProgress: (done: number, total: number) => vo
     leaf.pink.set(map, hsl(imageOf(map), (h) => ({ h: 0.95, s: 0.78, l: Math.min(0.9, h.l + 0.56) }), map));
     leaf.gold.set(map, hsl(imageOf(map), (h) => ({ h: 0.135, s: 0.95, l: Math.min(0.78, h.l + 0.4) }), map));
   }
-  return { nature, village, roofMaps, characters, clips, props, leaf };
+  return { nature, village, roofMaps, characters, clips, props, cat, leaf };
 }

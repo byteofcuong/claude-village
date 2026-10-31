@@ -2,10 +2,11 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { VillageSnapshot, VillagerDTO } from '../shared/types.js';
 import { loadAssets } from './assets.js';
+import { Cats } from './cats.js';
 import { demoSnapshot } from './demo.js';
 import { Panel } from './panel.js';
 import { DayNight } from './sky.js';
-import { Village, bobOf } from './village.js';
+import { Village, bobOf, type Isle } from './village.js';
 import { People } from './villagers.js';
 import { cloudTexture, makeRng, softDot } from './world.js';
 import './style.css';
@@ -18,6 +19,7 @@ const status = document.getElementById('status') as HTMLElement;
 const clockText = document.getElementById('clock') as HTMLElement;
 const countText = document.getElementById('count') as HTMLElement;
 const speedButton = document.getElementById('speed') as HTMLButtonElement;
+const homeButton = document.getElementById('home') as HTMLButtonElement;
 const statsText = document.getElementById('stats') as HTMLElement;
 const loading = document.getElementById('loading') as HTMLElement;
 const debug = params.has('hud');
@@ -147,6 +149,7 @@ function drifters(): THREE.Points {
 const assets = await loadAssets((done, total) => { loading.textContent = `Đang dựng làng… ${Math.round((done / total) * 100)}%`; });
 const village = new Village(assets, scene, sky.night, time, softDot('rgba(255,225,170,1)', 'rgba(255,150,70,.42)'));
 const people = new People(assets, scene);
+const cats = new Cats(assets, scene);
 clouds();
 drifters();
 
@@ -213,14 +216,54 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;
   pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   ray.setFromCamera(pointer, camera);
-  choose(people.pick(ray.ray));
+  const id = people.pick(ray.ray);
+  choose(id);
+  const isle = id ? people.isleOf(id) : village.isleAt(ray.ray);
+  if (isle) focus(isle);
 });
 renderer.domElement.addEventListener('pointermove', (e) => {
   pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   ray.setFromCamera(pointer, camera);
-  renderer.domElement.style.cursor = people.pick(ray.ray) ? 'pointer' : 'grab';
+  renderer.domElement.style.cursor = people.pick(ray.ray) || village.isleAt(ray.ray) ? 'pointer' : 'grab';
 });
-addEventListener('keydown', (e) => { if (e.key === 'Escape') choose(null); });
+addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (selected) choose(null);
+  else if (focused) goHome();
+});
+
+// Flying to an island: the camera turns around it afterwards, and zooms towards it.
+let focused: string | null = null;
+const FLIGHT_SECONDS = 1.2;
+const flight = { active: false, t: 0, fromAt: new THREE.Vector3(), toAt: new THREE.Vector3(), fromPos: new THREE.Vector3(), toPos: new THREE.Vector3() };
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+function flyTo(at: THREE.Vector3, pos: THREE.Vector3): void {
+  flight.fromAt.copy(controls.target);
+  flight.fromPos.copy(camera.position);
+  flight.toAt.copy(at);
+  flight.toPos.copy(pos);
+  flight.t = reducedMotion ? 1 : 0;
+  flight.active = true;
+}
+function focus(isle: Isle): void {
+  if (focused === isle.id) return;
+  focused = isle.id;
+  controls.autoRotate = false;
+  homeButton.hidden = false;
+  const at = new THREE.Vector3(isle.x, isle.y + 0.7, isle.z);
+  // Keep looking from the side the camera is already on, so the flight does not spin the world.
+  const side = camera.position.clone().sub(at).setY(0).normalize();
+  // Close and from above, so the islands in front do not block the view.
+  const dist = isle.R * 3.6;
+  flyTo(at, at.clone().addScaledVector(side, dist * 0.78).setY(at.y + dist * 0.62));
+}
+function goHome(): void {
+  focused = null;
+  homeButton.hidden = true;
+  flyTo(new THREE.Vector3(...view.at), new THREE.Vector3(...view.pos));
+}
+homeButton.addEventListener('click', goHome);
+controls.addEventListener('start', () => { flight.active = false; });
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
@@ -251,6 +294,13 @@ function tick(): void {
   const dt = Math.min(clock.getDelta(), 0.1);
   elapsed += dt;
   count++;
+  if (flight.active) {
+    flight.t = Math.min(1, flight.t + dt / FLIGHT_SECONDS);
+    const e = flight.t * flight.t * (3 - 2 * flight.t);
+    controls.target.lerpVectors(flight.fromAt, flight.toAt, e);
+    camera.position.lerpVectors(flight.fromPos, flight.toPos, e);
+    if (flight.t >= 1) flight.active = false;
+  }
   controls.update();
   const hour = currentHour(dt);
   sky.update(hour);
@@ -258,6 +308,7 @@ function tick(): void {
   fallTime.value = elapsed;
   village.update(elapsed);
   people.update(dt, elapsed, camera);
+  cats.update(dt, elapsed, village.isles(), people.feet());
   pond.position.y = -0.09 + bobOf(elapsed, -1);
   // Shadows follow the slow sun and only need a refresh now and then.
   if (village.dirty || count < 4 || count % 90 === 0) {
@@ -306,6 +357,23 @@ if (debug) {
     return Object.entries(out).sort((a, b) => b[1] - a[1]).slice(0, 14);
   };
   (window as unknown as { __clipOf: unknown }).__clipOf = (id: string) => people.clipOf(id);
+  // For scripts/e2e.mjs: where the camera is looking, and where an island is on screen.
+  (window as unknown as { __view: unknown }).__view = () => ({ x: controls.target.x, y: controls.target.y, z: controls.target.z, flying: flight.active, focused });
+  (window as unknown as { __isleOnScreen: unknown }).__isleOnScreen = (id: string) => {
+    const isle = village.isle(id);
+    if (!isle) return null;
+    const p = new THREE.Vector3(isle.x, isle.y + isle.shape.heightAt(isle.R * 0.6, isle.R * 0.2), isle.z).add(new THREE.Vector3(isle.R * 0.6, 0, isle.R * 0.2)).project(camera);
+    return { x: ((p.x + 1) / 2) * innerWidth, y: ((1 - p.y) / 2) * innerHeight, wx: isle.x, wz: isle.z };
+  };
+  // For scripts/walk.mjs: who is standing inside a solid model right now.
+  (window as unknown as { __inside: unknown }).__inside = () => {
+    const spots = people.feet();
+    const hits = spots.map((s) => ({ id: s.id, assets: village.solidsAt(s.x, s.y, s.z) })).filter((h) => h.assets.length);
+    const close = spots.flatMap((a, i) => spots.slice(i + 1).filter((b) => Math.hypot(a.x - b.x, a.z - b.z) < 0.4).map((b) => a.moving || b.moving));
+    const catFeet = cats.feet();
+    const catHits = catFeet.map((s, i) => ({ id: `cat-${i}`, assets: village.solidsAt(s.x, s.y, s.z) })).filter((h) => h.assets.length);
+    return { people: spots.length, hits: [...hits, ...catHits], crowded: close.length, standing: close.filter((m) => !m).length, cats: catFeet.length };
+  };
 }
 if (DEMO) {
   const start = Date.now();

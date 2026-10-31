@@ -47,7 +47,8 @@ const waitFor = async (fn, ms = 10000) => {
 let lastWait = 0;
 
 try {
-  await page.goto(`http://127.0.0.1:${PORT}/?still&hud&hour=11&cam=hero`);
+  // The wide view: the temp folder's random name puts the island anywhere on the map.
+  await page.goto(`http://127.0.0.1:${PORT}/?still&hud&hour=11&cam=wide`);
   await page.waitForFunction(() => window.__stats?.ready, null, { timeout: 45000 });
   const snap = await page.evaluate(() => window.__snapshot());
   check('real project becomes one island', snap.houses.length === 1 && snap.houses[0].name === 'my-project');
@@ -89,6 +90,17 @@ try {
   check('villager sleeps when its process ends', await waitFor(`window.__snapshot()?.houses[0]?.villagers[0]?.state === 'asleep'`));
   check('sleeping villager lies down', await waitFor(`window.__clipOf(window.__snapshot().houses[0].villagers[0].id) === 'Lie_Idle'`));
   check('the panel closes on Escape', await page.keyboard.press('Escape').then(() => waitFor(`document.querySelector('.panel').hidden`)));
+  const houseId = snap.houses[0].id;
+  check('clicking a villager also flies to their island', await waitFor(`window.__view().focused === ${JSON.stringify(houseId)} && !window.__view().flying`));
+  await page.keyboard.press('Escape');
+  check('Escape goes back to the whole village', await waitFor(`window.__view().focused === null && !window.__view().flying && !document.querySelector('#home:not([hidden])')`), JSON.stringify(await page.evaluate(() => window.__view())));
+  const spot = await page.evaluate((i) => window.__isleOnScreen(i), houseId);
+  await page.mouse.click(spot.x, spot.y);
+  check('clicking an island focuses it', await waitFor(`window.__view().focused === ${JSON.stringify(houseId)} && !window.__view().flying`));
+  const seen = await page.evaluate(() => window.__view());
+  check('the camera looks at that island', Math.hypot(seen.x - spot.wx, seen.z - spot.wz) < 0.2, `${seen.x.toFixed(2)}, ${seen.z.toFixed(2)}`);
+  await page.click('#home');
+  check('the button goes back to the whole village', await waitFor(`window.__view().focused === null`));
   check('no console or CSP errors', errors.length === 0, errors.join(' | '));
   check('no requests leave the machine', outside.length === 0, outside.slice(0, 3).join(' '));
 } catch (err) {

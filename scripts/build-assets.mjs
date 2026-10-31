@@ -15,7 +15,8 @@ const adv = join(src, 'KayKit_Adventurers_2.0_FREE', 'KayKit_Adventurers_2.0_FRE
 const anim = join(src, 'KayKit_Character_Animations_1.1', 'KayKit_Character_Animations_1.1', 'Animations', 'gltf', 'Rig_Medium');
 const nature = join(src, 'Quaternius_Nature', 'glTF');
 const village = join(src, 'WizP_Village', 'VillagePack.glb');
-for (const need of [adv, anim, nature, village]) {
+const cat = join(src, 'Vuena_Pets', 'GLB', 'animal_cat.glb');
+for (const need of [adv, anim, nature, village, cat]) {
   if (!existsSync(need)) {
     console.error(`Missing source pack: ${need}\nSee assets/LICENSES.md.`);
     process.exit(2);
@@ -23,7 +24,7 @@ for (const need of [adv, anim, nature, village]) {
 }
 
 rmSync(out, { recursive: true, force: true });
-for (const d of ['chars', 'anims', 'props', 'nature', 'village']) mkdirSync(join(out, d), { recursive: true });
+for (const d of ['chars', 'anims', 'props', 'nature', 'village', 'cats']) mkdirSync(join(out, d), { recursive: true });
 
 await MeshoptSimplifier.ready;
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
@@ -63,7 +64,7 @@ for (const p of ['axe_1handed', 'spellbook_open', 'mug_full', 'staff']) {
 
 // Nature: normal maps removed, textures shrunk, the heavier trees simplified.
 const NATURE = {
-  CommonTree_3: 1900, CommonTree_5: 1900, Pine_5: 1500,
+  CommonTree_3: 1700, CommonTree_5: 1700, Pine_5: 1300,
   Fern_1: 0, Clover_1: 0, Clover_2: 0, Flower_3_Single: 0, Grass_Common_Short: 0,
   Rock_Medium_1: 0, Rock_Medium_2: 0, Pebble_Square_4: 0, Plant_1: 0,
 };
@@ -82,6 +83,20 @@ for (const [name, target] of Object.entries(NATURE)) {
   await io.write(join(out, 'nature', `${name}.glb`), doc);
   report[`nature:${name}`] = tris(doc);
 }
+
+// The cat: its lighter mesh only, simplified again, with just the clips a village cat needs.
+const catDoc = await io.read(cat);
+for (const node of catDoc.getRoot().listNodes()) if (node.getName() === 'cat_LOD0') node.dispose();
+for (const clip of catDoc.getRoot().listAnimations()) if (!['idle', 'idle_alt', 'walk', 'sit', 'sleep', 'eat'].includes(clip.getName())) clip.dispose();
+for (const m of catDoc.getRoot().listMaterials()) {
+  m.setMetallicRoughnessTexture(null);
+  m.setMetallicFactor(0);
+  m.setRoughnessFactor(1);
+}
+await catDoc.transform(prune({ keepLeaves: true, keepAttributes: true }));
+await catDoc.transform(weld(), simplify({ simplifier: MeshoptSimplifier, ratio: 1000 / tris(catDoc), error: 0.03 }), textureCompress({ encoder: sharp, targetFormat: 'webp', resize: [512, 512], quality: 86 }));
+await io.write(join(out, 'cats', 'cat.glb'), catDoc);
+report.cat = tris(catDoc);
 
 const v = await io.read(village);
 const vb = tris(v);

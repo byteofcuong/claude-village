@@ -2,17 +2,18 @@
 // batches that are rebuilt only when the set of islands changes.
 import * as THREE from 'three';
 import type { Assets, Model } from './assets.js';
+import { BODY, isFree, pushOut, type Obstacle, type Point } from './paths.js';
 import { hashString, labelTexture, makeIsland, makeRng, merge, ropeBridge, type IslandShape } from './world.js';
+export type { Point } from './paths.js';
 
 /** x, height, z of each island around the centre. */
 export const SLOTS: [number, number, number][] = [
-  [9.6, 0.7, 3.2], [11.5, -0.2, 6.8], [1.8, -0.6, 11.3], [-9.8, 0.9, 5.6], [-10.8, -0.4, -4], [-1, 1.1, -12], [10.4, 0.3, -6.8],
-  [21.5, -1.2, 2], [18, 1, 13.6], [7.2, -1.6, 21], [-12, 0.8, 18], [-22, -0.8, 6.8], [-20.5, 1.2, -8.4], [15, -1, -18.5],
+  [11.1, 0.7, 1], [11.2, -0.2, 10.1], [1.8, -0.6, 11.3], [-9.8, 0.9, 5.6], [-10.8, -0.4, -4], [-1, 1.1, -12], [10.4, 0.3, -8.1],
+  [21.5, -1.2, 2], [19.2, 1, 14.4], [7.2, -1.6, 21], [-12.5, 0.8, 18.2], [-22, -0.8, 6.8], [-20.5, 1.2, -8.4], [15, -1, -18.5],
 ];
 const TENT_POS: [number, number, number] = [-5.6, -0.3, 15.5];
 
 export type StationName = 'door' | 'work' | 'forge' | 'read' | 'view' | 'rest';
-export interface Point { x: number; z: number }
 export interface Isle {
   id: string;
   x: number; y: number; z: number;
@@ -22,6 +23,26 @@ export interface Isle {
   stations: Record<StationName, Point>;
   patrol: Point[];
   facing: number;
+  /** What stands in the way of a walk, in island coordinates. */
+  obstacles: Obstacle[];
+  /** What a person at a station turns towards while working. */
+  looks: Partial<Record<StationName, Point>>;
+}
+
+export const walkable = (isle: Isle, p: Point) => Math.hypot(p.x, p.z) < isle.shape.radiusAt(Math.atan2(p.z, p.x)) * 0.84;
+
+/** A rectangle as a ring of circles; the gaps between them are narrower than a person. */
+function boxCircles(cx: number, cz: number, facing: number, width: number, depth: number): Obstacle[] {
+  const r = 0.62, out: Obstacle[] = [];
+  const count = (len: number) => Math.max(1, Math.ceil(len / (r * 1.6)));
+  const nx = count(width), nz = count(depth);
+  for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
+    if (i > 0 && i < nx - 1 && j > 0 && j < nz - 1) continue;
+    const dx = nx > 1 ? -width / 2 + r * 0.8 + (i / (nx - 1)) * (width - r * 1.6) : 0;
+    const dz = nz > 1 ? -depth / 2 + r * 0.8 + (j / (nz - 1)) * (depth - r * 1.6) : 0;
+    out.push({ x: cx + Math.sin(facing) * dz + Math.cos(facing) * dx, z: cz + Math.cos(facing) * dz - Math.sin(facing) * dx, r });
+  }
+  return out;
 }
 interface Item { x: number; y: number; z: number; r: number; size: number; phase: number; cast?: boolean; pale?: 'pink' | 'gold' }
 interface Plan { isle: Isle; items: Map<string, Item[]>; lights: THREE.Vector3[]; label: THREE.Sprite; terrain: THREE.Mesh; shadowBase?: number }
@@ -61,6 +82,7 @@ export class Village {
   private batches: THREE.Object3D[] = [];
   private bridge: THREE.Mesh | null = null;
   private activeKey = '';
+  private readonly caster = new THREE.Raycaster();
   private readonly terrainMat = drifting(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }), false);
   private readonly bridgeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 });
   private readonly matCache = new Map<string, THREE.Material>();
@@ -92,6 +114,32 @@ export class Village {
   update(t: number): void { uT.value = t; }
   isle(id: string): Isle | undefined { return this.plans.get(id)?.isle; }
   tent(): Isle | undefined { return this.plans.get('tent')?.isle; }
+  isles(): Isle[] { return [this.centre, ...[...this.plans.values()].map((p) => p.isle)]; }
+
+  /** The island a ray points at: the ground it hits, or else the one it passes closest to, such as over a roof. */
+  isleAt(ray: THREE.Ray): Isle | null {
+    const all = [this.centrePlan, ...this.plans.values()];
+    this.caster.ray.copy(ray);
+    const hit = this.caster.intersectObjects(all.map((p) => p.terrain), false)[0];
+    if (hit) return all.find((p) => p.terrain === hit.object)?.isle ?? null;
+    const point = new THREE.Vector3();
+    let best: Isle | null = null, bestMiss = 1;
+    for (const { isle } of all) {
+      const miss = Math.sqrt(ray.distanceSqToPoint(point.set(isle.x, isle.y + 0.8, isle.z))) / isle.R;
+      if (miss < bestMiss) { bestMiss = miss; best = isle; }
+    }
+    return best;
+  }
+
+  /** The solid models a standing person at this spot would stand inside, for the walking check. */
+  solidsAt(x: number, y: number, z: number): string[] {
+    const ray = new THREE.Raycaster(new THREE.Vector3(x, y + 0.7, z), new THREE.Vector3(0, -1, 0), 0, 0.6);
+    const solid = this.batches.filter((b) => {
+      const mat = (b as THREE.InstancedMesh).material as THREE.Material;
+      return b.userData['solid'] === true && mat.alphaTest === 0;
+    });
+    return [...new Set(ray.intersectObjects(solid, false).map((h) => h.object.userData['asset'] as string))];
+  }
 
   /** Brings the islands in line with the snapshot. Costly work happens only if the set changed. */
   sync(houses: { id: string; name: string; slot: number }[], tent: boolean): void {
@@ -162,6 +210,8 @@ export class Village {
         inst.frustumCulled = false;
         inst.castShadow = group[0]!.cast !== false;
         inst.receiveShadow = true;
+        inst.userData['asset'] = name;
+        inst.userData['solid'] = kind === 'v' || /Rock|Tree|Pine/.test(name);
         this.group.add(inst);
         this.batches.push(inst);
       }
@@ -225,9 +275,21 @@ export class Village {
   }
 
   private cliffRocks(items: Map<string, Item[]>, isle: Isle, rnd: () => number, n: number): void {
+    const model = this.assets.nature.get('Rock_Medium_2');
+    const paths = [...Object.values(isle.stations), ...isle.patrol];
     for (let i = 0; i < n; i++) {
       const a = (i / n) * 6.28 + rnd() * 0.5, rim = isle.shape.radiusAt(a), d = rnd(), m = rim * (0.92 - d * 0.42);
-      put(items, 'n:Rock_Medium_2', { x: isle.x + Math.cos(a) * m, y: isle.y - 0.55 - d * isle.R * 0.62, z: isle.z + Math.sin(a) * m, r: rnd() * 6.28, size: 0.9 + rnd() * 1.1 * (isle.R / 3.5), phase: isle.phase });
+      const x = Math.cos(a) * m, z = Math.sin(a) * m, r = rnd() * 6.28, size = 0.9 + rnd() * 1.1 * (isle.R / 3.5);
+      const ground = isle.y + isle.shape.heightAt(x, z);
+      let y = isle.y - 0.55 - d * isle.R * 0.62;
+      if (y + size > ground && model) {
+        // These rocks belong to the cliff. One that breaks the surface sinks if it would sit on a
+        // place people use, and otherwise becomes something to walk around.
+        const reach = (size / model.height) * model.footprint * 0.5;
+        if (paths.some((p) => Math.hypot(p.x - x, p.z - z) < reach + BODY + 0.3)) y = ground - size - 0.02;
+        else isle.obstacles.push({ x, z, r: reach });
+      }
+      put(items, 'n:Rock_Medium_2', { x: isle.x + x, y, z: isle.z + z, r, size, phase: isle.phase });
     }
   }
 
@@ -248,6 +310,7 @@ export class Village {
       if (pale) item.pale = pale;
       put(items, `n:${asset}`, item);
       keepOut.push({ x: s.x, z: s.z, r: 0.5 });
+      isle.obstacles.push({ x: s.x, z: s.z, r: 0.28 });
     }
     for (const [asset, h, n] of PLANTS) for (let i = 0; i < Math.round(n * plantScale); i++) {
       const s = spot(0.12, 0.95, 0.03);
@@ -257,8 +320,9 @@ export class Village {
 
   private label(text: string, pos: [number, number, number], height: number): THREE.Sprite {
     const { texture, aspect } = labelTexture(text);
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, fog: false, transparent: true }));
-    sprite.scale.set(0.62 * aspect, 0.62, 1);
+    // The same size on screen at any distance, so a name never covers the island it belongs to.
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, fog: false, transparent: true, sizeAttenuation: false }));
+    sprite.scale.set(0.015 * aspect, 0.015, 1);
     sprite.position.set(pos[0], pos[1] + height, pos[2]);
     sprite.renderOrder = 5;
     return sprite;
@@ -272,19 +336,29 @@ export class Village {
     const local = (dx: number, dz: number): Point => ({ x: hx + Math.sin(facing) * dz + Math.cos(facing) * dx, z: hz + Math.cos(facing) * dz - Math.sin(facing) * dx });
     const stations: Record<StationName, Point> = { door: local(-0.2, 1.85), work: local(1.5, 1.55), forge: local(-1.55, 1.45), read: local(0.9, 2.5), view: local(-0.9, 2.65), rest: local(0.15, 2.5) };
     const patrol = [local(-1.9, 1.2), local(-1, 2.8), local(1, 2.85), local(2, 1.1)];
-    const isle: Isle = { id, x: pos[0], y: pos[1], z: pos[2], R, phase, shape, stations, patrol, facing };
+    const looks = { forge: local(-1.9, 1.05), work: local(1.95, 1.2) };
+    const isle: Isle = { id, x: pos[0], y: pos[1], z: pos[2], R, phase, shape, stations, patrol, facing, obstacles: [], looks };
     const items = new Map<string, Item[]>();
     const [house, width] = HOUSES[h % HOUSES.length]!;
     const roof = ROOFS[(h >>> 4) % ROOFS.length]!;
     const at = (p: Point) => ({ x: pos[0] + p.x, y: pos[1] + shape.heightAt(p.x, p.z) - 0.01, z: pos[2] + p.z });
     put(items, `v:${house}:${roof}`, { x: pos[0] + hx, y: pos[1] + shape.heightAt(hx, hz) - 0.02, z: pos[2] + hz, r: facing, size: width, phase });
-    const prop = (asset: string, p: Point, size: number, r = facing) => put(items, `v:${asset}:${roof}`, { ...at(p), r, size, phase });
-    prop('forge', local(-1.9, 1.05), 0.95);
-    prop(h % 2 ? 'cart' : 'frame', local(1.95, 1.2), 1.1, facing + 0.5);
+    const houseModel = this.assets.village.get(house);
+    const houseScale = houseModel ? width / houseModel.footprint : 1;
+    isle.obstacles.push(...boxCircles(hx, hz, facing, (houseModel?.sizeX ?? width) * houseScale, (houseModel?.sizeZ ?? width) * houseScale));
+    const prop = (asset: string, p: Point, size: number, r = facing) => {
+      put(items, `v:${asset}:${roof}`, { ...at(p), r, size, phase });
+      isle.obstacles.push({ x: p.x, z: p.z, r: size * 0.5 });
+    };
+    prop('forge', looks.forge, 0.95);
+    prop(h % 2 ? 'cart' : 'frame', looks.work, 1.1, facing + 0.5);
     prop('wood_1', local(1.6, 1.0), 0.55);
     prop(h % 3 === 0 ? 'well' : 'lamp', local(1.25, 2.1), h % 3 === 0 ? 0.72 : 0.36);
     prop(['pot_1', 'barrel_1', 'urn_1'][h % 3]!, local(-0.95, 1.7), 0.32);
-    const keepOut = [{ x: hx, z: hz, r: 2.0 }, ...Object.values(stations).map((p) => ({ ...p, r: 0.6 })), ...patrol.map((p) => ({ ...p, r: 0.35 }))];
+    for (const key of Object.keys(stations) as StationName[]) stations[key] = pushOut(stations[key], isle.obstacles);
+    // A patrol point squeezed between the house and a prop has no room for a person, so it is dropped.
+    isle.patrol = patrol.map((p) => pushOut(p, isle.obstacles)).filter((p) => isFree(p, isle.obstacles));
+    const keepOut = [{ x: hx, z: hz, r: 2.0 }, ...Object.values(stations).map((p) => ({ ...p, r: 0.6 })), ...isle.patrol.map((p) => ({ ...p, r: 0.35 }))];
     const flower = h % 3 === 0 ? 'pink' : h % 3 === 1 ? 'gold' : undefined;
     const big: [string, number, number, ('pink' | 'gold')?][] = [[TREES[h % TREES.length]!, 2.5, 1], [flower ? BLOSSOM[h % 2]! : 'Pine_5', 2.1, 1, flower]];
     this.scatter(items, isle, rnd, keepOut, big, 1);
@@ -297,7 +371,11 @@ export class Village {
     const rnd = makeRng(444), R = 2.6, phase = 1.3;
     const shape = makeIsland({ R, seed: 91.2, rings: 9, segs: 28, depth: R * 1.1, flats: [{ x: 0, z: 0, r: 2.1 }] });
     const stations: Record<StationName, Point> = { door: { x: 0, z: 1.1 }, work: { x: 0.9, z: 0.8 }, forge: { x: -0.9, z: 0.8 }, read: { x: 0.5, z: 1.5 }, view: { x: -0.5, z: 1.5 }, rest: { x: 0, z: 1.55 } };
-    const isle: Isle = { id: 'tent', x: pos[0], y: pos[1], z: pos[2], R, phase, shape, stations, patrol: [{ x: -1.2, z: 0.7 }, { x: 0, z: 1.7 }, { x: 1.2, z: 0.7 }], facing: 0 };
+    const obstacles = [{ x: 0, z: -0.4, r: 0.95 }, { x: 1.1, z: 0.4, r: 0.17 }];
+    for (const key of Object.keys(stations) as StationName[]) stations[key] = pushOut(stations[key], obstacles);
+    const patrol = [{ x: -1.2, z: 0.7 }, { x: 0, z: 1.7 }, { x: 1.2, z: 0.7 }].map((p) => pushOut(p, obstacles));
+    const stand = { x: 0, z: -0.4 };
+    const isle: Isle = { id: 'tent', x: pos[0], y: pos[1], z: pos[2], R, phase, shape, stations, patrol, facing: 0, obstacles, looks: { forge: stand, work: stand } };
     const items = new Map<string, Item[]>();
     put(items, 'v:stand:slate', { x: pos[0], y: pos[1] + shape.heightAt(0, -0.4), z: pos[2] - 0.4, r: 0, size: 1.9, phase });
     put(items, 'v:lamp:slate', { x: pos[0] + 1.1, y: pos[1] + shape.heightAt(1.1, 0.4), z: pos[2] + 0.4, r: 0, size: 0.34, phase });
@@ -311,13 +389,17 @@ export class Village {
     const pond = { x: -2.6, z: 1.6, r: 1.25 };
     const shape = makeIsland({ R, seed: 5.3, rings: 18, segs: 44, depth: 8, pond, flats: [{ x: 0.4, z: 1.7, r: 2.35, earth: true }, { x: 1.6, z: -1.7, r: 2 }] });
     const stations: Record<StationName, Point> = { door: { x: 0.4, z: 2.9 }, work: { x: 1.6, z: 1.7 }, forge: { x: -0.8, z: 1.7 }, read: { x: 1.2, z: 2.6 }, view: { x: -0.3, z: 2.9 }, rest: { x: 0.4, z: 0.5 } };
-    const isle: Isle = { id: 'centre', x: 0, y: 0, z: 0, R, phase, shape, stations, patrol: [], facing: 0 };
+    const isle: Isle = { id: 'centre', x: 0, y: 0, z: 0, R, phase, shape, stations, patrol: [], facing: 0, obstacles: [], looks: {} };
     const items = new Map<string, Item[]>();
     const at = (x: number, z: number) => ({ x, y: shape.heightAt(x, z) - 0.02, z });
     put(items, 'v:shrine:clay', { ...at(1.7, -1.9), r: 0.55, size: 3.4, phase });
     put(items, 'v:arch_2:terracotta', { ...at(3.1, 3.3), r: 0.9, size: 2, phase });
     put(items, 'v:brazier:terracotta', { ...at(0.4, 1.7), r: 0, size: 0.72, phase });
     for (const [x, z] of [[-0.9, 3.2], [1.9, 2.8], [-1.4, 0.3]] as const) put(items, 'v:lamp:clay', { ...at(x, z), r: rnd() * 6, size: 0.34, phase });
+    isle.obstacles.push(
+      ...boxCircles(1.7, -1.9, 0.55, 3.4, 3.4), { x: 3.1, z: 3.3, r: 1 }, { x: 0.4, z: 1.7, r: 0.4 },
+      { x: -0.9, z: 3.2, r: 0.17 }, { x: 1.9, z: 2.8, r: 0.17 }, { x: -1.4, z: 0.3, r: 0.17 }, { x: pond.x, z: pond.z, r: pond.r + 0.1 },
+    );
     const lights = [new THREE.Vector3(0.4, shape.heightAt(0.4, 1.7) + 0.8, 1.7), ...[[-0.9, 3.2], [1.9, 2.8], [-1.4, 0.3]].map(([x, z]) => new THREE.Vector3(x!, shape.heightAt(x!, z!) + 0.55, z!))];
     for (let i = 0; i < 4; i++) {
       const a = rnd() * 6.28, m = Math.sqrt(rnd()) * pond.r * 0.8;
