@@ -2,7 +2,7 @@
 // batches that are rebuilt only when the set of islands changes.
 import * as THREE from 'three';
 import type { Assets, Model } from './assets.js';
-import { BODY, isFree, pushOut, type Obstacle, type Point } from './paths.js';
+import { BODY, boxCircles, isFree, pushOut, type Obstacle, type Point } from './paths.js';
 import { hashString, labelTexture, makeIsland, makeRng, merge, ropeBridge, type IslandShape } from './world.js';
 export type { Point } from './paths.js';
 
@@ -31,19 +31,6 @@ export interface Isle {
 
 export const walkable = (isle: Isle, p: Point) => Math.hypot(p.x, p.z) < isle.shape.radiusAt(Math.atan2(p.z, p.x)) * 0.84;
 
-/** A rectangle as a ring of circles; the gaps between them are narrower than a person. */
-function boxCircles(cx: number, cz: number, facing: number, width: number, depth: number): Obstacle[] {
-  const r = 0.62, out: Obstacle[] = [];
-  const count = (len: number) => Math.max(1, Math.ceil(len / (r * 1.6)));
-  const nx = count(width), nz = count(depth);
-  for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
-    if (i > 0 && i < nx - 1 && j > 0 && j < nz - 1) continue;
-    const dx = nx > 1 ? -width / 2 + r * 0.8 + (i / (nx - 1)) * (width - r * 1.6) : 0;
-    const dz = nz > 1 ? -depth / 2 + r * 0.8 + (j / (nz - 1)) * (depth - r * 1.6) : 0;
-    out.push({ x: cx + Math.sin(facing) * dz + Math.cos(facing) * dx, z: cz + Math.cos(facing) * dz - Math.sin(facing) * dx, r });
-  }
-  return out;
-}
 interface Item { x: number; y: number; z: number; r: number; size: number; phase: number; cast?: boolean; pale?: 'pink' | 'gold' }
 interface Plan { isle: Isle; items: Map<string, Item[]>; lights: THREE.Vector3[]; label: THREE.Sprite; terrain: THREE.Mesh; shadowBase?: number }
 

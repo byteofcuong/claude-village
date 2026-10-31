@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY, isFree, pushOut, route, type Obstacle, type Point } from '../src/client/paths.js';
+import { BODY, boxCircles, isFree, pushOut, route, type Obstacle, type Point } from '../src/client/paths.js';
 
 const gapTo = (o: Obstacle, a: Point, b: Point) => {
   const vx = b.x - a.x, vz = b.z - a.z, len2 = vx * vx + vz * vz;
@@ -7,6 +7,19 @@ const gapTo = (o: Obstacle, a: Point, b: Point) => {
   return Math.hypot(a.x + vx * t - o.x, a.z + vz * t - o.z) - o.r;
 };
 const walk = (from: Point, path: Point[]) => path.map((p, i) => [i ? path[i - 1]! : from, p] as const);
+
+describe('boxCircles', () => {
+  it('leaves no room to stand anywhere inside the rectangle', () => {
+    for (const [width, depth] of [[3.4, 3.4], [4.6, 2.2], [1, 1]] as const) {
+      const box = boxCircles(1.7, -1.9, 0.55, width, depth);
+      for (let u = -0.5; u <= 0.5; u += 0.05) for (let v = -0.5; v <= 0.5; v += 0.05) {
+        const dx = u * width, dz = v * depth;
+        const p = { x: 1.7 + Math.sin(0.55) * dz + Math.cos(0.55) * dx, z: -1.9 + Math.cos(0.55) * dz - Math.sin(0.55) * dx };
+        expect(isFree(p, box)).toBe(false);
+      }
+    }
+  });
+});
 
 describe('route', () => {
   it('walks straight when nothing is in the way', () => {

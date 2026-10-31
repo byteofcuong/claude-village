@@ -7,6 +7,19 @@ export interface Obstacle extends Point { r: number }
 export const BODY = 0.2;
 const RING = 8;
 
+/** A solid rectangle as a grid of circles; the gaps between them are narrower than a person. */
+export function boxCircles(cx: number, cz: number, facing: number, width: number, depth: number): Obstacle[] {
+  const r = 0.62, out: Obstacle[] = [];
+  const count = (len: number) => Math.max(1, Math.ceil(len / (r * 1.6)));
+  const nx = count(width), nz = count(depth);
+  for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
+    const dx = nx > 1 ? -width / 2 + r * 0.8 + (i / (nx - 1)) * (width - r * 1.6) : 0;
+    const dz = nz > 1 ? -depth / 2 + r * 0.8 + (j / (nz - 1)) * (depth - r * 1.6) : 0;
+    out.push({ x: cx + Math.sin(facing) * dz + Math.cos(facing) * dx, z: cz + Math.cos(facing) * dz - Math.sin(facing) * dx, r });
+  }
+  return out;
+}
+
 /** The nearest spot to p that a person can stand on. */
 export function pushOut(p: Point, obstacles: readonly Obstacle[], margin = BODY + 0.03): Point {
   let { x, z } = p;
