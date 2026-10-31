@@ -330,10 +330,12 @@ function tick(): void {
     (window as unknown as { __stats: unknown }).__stats = { ready: !!snapshot, fps: +fps.toFixed(1), calls, triangles, hour: +hour.toFixed(2), pixelRatio };
     statsText.textContent = `${fps.toFixed(0)} FPS · ${calls} calls · ${(triangles / 1000).toFixed(0)}k tris`;
     clockText.textContent = `${labelOf(hour)} ${String(Math.floor(hour)).padStart(2, '0')}:${String(Math.floor((hour % 1) * 60)).padStart(2, '0')}`;
-    // On a weak GPU, trade a little sharpness for smoothness rather than stutter.
-    slowSeconds = fps < 28 ? slowSeconds + 1 : 0;
-    if (slowSeconds >= 5 && pixelRatio > 0.7) {
-      pixelRatio = Math.max(0.7, pixelRatio - 0.15);
+    // On a weak GPU, trade a little sharpness for smoothness rather than stutter: first down to the
+    // screen's own pixels, and below that only when the game would otherwise be choppy.
+    const floor = fps < 28 ? 0.7 : Math.min(devicePixelRatio, 1);
+    slowSeconds = fps < 58 ? slowSeconds + 1 : 0;
+    if (slowSeconds >= 5 && pixelRatio > floor) {
+      pixelRatio = Math.max(floor, pixelRatio - 0.125);
       renderer.setPixelRatio(pixelRatio);
       slowSeconds = 0;
     }

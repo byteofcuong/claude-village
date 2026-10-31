@@ -19,7 +19,8 @@ const SHOTS = process.argv.slice(2).length ? process.argv.slice(2) : [
   'hero-dawn=demo=small&hour=6.2&cam=hero', 'close-noon=demo=small&hour=11&cam=close', 'close-night=demo=small&hour=21&cam=close',
 ];
 const browser = await chromium.launch({ channel: 'msedge', headless: false, args: ['--window-position=40,40', '--disable-background-timer-throttling'] });
-const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+// A 1920x1080 screen at 125%, which is what this game is really played on.
+const page = await browser.newPage({ viewport: { width: 1536, height: 730 }, deviceScaleFactor: 1.25 });
 const errors = [], outside = [];
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 300)); });
 page.on('pageerror', (e) => errors.push(String(e).slice(0, 300)));

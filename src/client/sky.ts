@@ -37,8 +37,8 @@ const skyFragment = `varying vec3 d; uniform vec3 zenith, midc, horizon, below, 
     vec3 c=y>0.?mix(horizon,mix(midc,zenith,smoothstep(.1,.62,y)),smoothstep(0.,.16,y)):mix(horizon,below,smoothstep(0.,-.14,y));
     float s=max(dot(v,sunDir),0.); c+=sunColor*(pow(s,7.)*.2+pow(s,70.)*.35)*(1.-night*.9)+vec3(1.,.97,.88)*pow(s,700.)*2.*(1.-night);
     float m=max(dot(v,moonDir),0.); c+=vec3(.75,.82,1.)*(pow(m,900.)*2.4+pow(m,40.)*.1)*night;
-    vec2 st=vec2(v.x,v.z)/(abs(y)+.25)*vec2(1.2,3.5); float w=smoothstep(.48,.72,f(st+3.))*smoothstep(.04,.22,y)*(1.-smoothstep(.5,.9,y));
-    c=mix(c,mix(vec3(1.),horizon,.45),w*.6*(1.-night*.7));
+    if(y>.04&&y<.9){ vec2 st=vec2(v.x,v.z)/(abs(y)+.25)*vec2(1.2,3.5); float w=smoothstep(.48,.72,f(st+3.))*smoothstep(.04,.22,y)*(1.-smoothstep(.5,.9,y));
+      c=mix(c,mix(vec3(1.),horizon,.45),w*.6*(1.-night*.7)); }
     if(night>.02&&y>-.02){ vec2 g=v.xz/(abs(y)+.45)*190.; vec2 id=floor(g); float r=h(id); float star=step(.988,r)*smoothstep(.45,.0,length(fract(g)-.5)); c+=vec3(.9,.94,1.)*star*night*(.45+.55*h(id+3.)); }
     gl_FragColor=vec4(c,1.);
     #include <colorspace_fragment>
@@ -59,7 +59,8 @@ export class DayNight {
   constructor(scene: THREE.Scene, span: number) {
     scene.fog = this.fog;
     const sky = new THREE.Mesh(new THREE.SphereGeometry(300, 32, 20), new THREE.ShaderMaterial({ side: THREE.BackSide, depthWrite: false, fog: false, toneMapped: false, uniforms: this.uniforms, vertexShader: skyVertex, fragmentShader: skyFragment }));
-    sky.renderOrder = -10;
+    // Drawn after everything solid, so the costly shader only runs on pixels that really show sky.
+    sky.renderOrder = 10;
     scene.add(sky, this.hemi, this.sun);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);

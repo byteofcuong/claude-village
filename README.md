@@ -24,6 +24,8 @@ Mở `http://127.0.0.1:4717`. Kéo để xoay, cuộn để phóng to, click và
 
 Muốn xem thử không cần session thật: `http://127.0.0.1:4717/?demo=stress`.
 
+Laptop có hai GPU: trình duyệt thường chạy bằng GPU tích hợp nên game kém mượt. Trên Windows, vào Settings > System > Display > Graphics, chọn trình duyệt, đặt High performance rồi mở lại trình duyệt.
+
 ## Người dân đang làm gì
 
 | Việc của Claude | Trong làng |
