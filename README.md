@@ -44,7 +44,7 @@ Laptop có hai GPU: trình duyệt thường chạy bằng GPU tích hợp nên 
 
 "Đang chờ bạn duyệt quyền" chưa có tín hiệu đáng tin nên chưa hiển thị riêng.
 
-Vài con mèo nhiều màu thỉnh thoảng ghé một đảo ngẫu nhiên, đi dạo, ngồi, ngủ rồi đi chỗ khác. Hai con rồng lượn quanh làng, thỉnh thoảng hạ xuống đậu trên đảo, gầm một tiếng rồi bay tiếp. Mèo và rồng chỉ để cho vui, không ứng với session nào.
+Vài con mèo nhiều màu thỉnh thoảng ghé một đảo ngẫu nhiên, đi dạo, ngồi, ngủ rồi đi chỗ khác. Hai con rồng lượn quanh làng, thỉnh thoảng hạ xuống đậu trên đảo, gầm một tiếng rồi bay tiếp. Thỉnh thoảng Tung Tung Tung Sahur xuất hiện trên một đảo, đi lang thang, gõ chày ba nhịp rồi gọi "Sahur!". Mèo và Tung Tung thỉnh thoảng đi qua cầu sang đảo bên cạnh. Mèo, rồng và Tung Tung chỉ để cho vui, không ứng với session nào.
 
 Lời thoại được viết sẵn theo từng loại việc, cùng lắm chèn tên file hoặc mô tả ngắn đã có trong bảng chi tiết. Prompt và lệnh không bao giờ lên lời thoại.
 

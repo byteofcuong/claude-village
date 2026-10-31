@@ -1,6 +1,7 @@
 // Geometry and textures made by code: terrain, bridges, soft sprites.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { sagOf } from './paths.js';
 
 export const col = (c: string) => new THREE.Color(c);
 export const mix = (a: THREE.Color, b: THREE.Color, t: number) => a.clone().lerp(b, Math.min(1, Math.max(0, t)));
@@ -151,7 +152,7 @@ export function ropeBridge(a: [number, number, number], b: [number, number, numb
   const parts: THREE.BufferGeometry[] = [], A = new THREE.Vector3(...a), B = new THREE.Vector3(...b), dir = B.clone().sub(A), len = dir.length();
   const side = new THREE.Vector3(-dir.z, 0, dir.x).normalize().multiplyScalar(0.21);
   const yaw = Math.atan2(dir.x, dir.z);
-  const at = (t: number) => { const p = A.clone().lerp(B, t); p.y -= Math.sin(t * Math.PI) * len * 0.09; return p; };
+  const at = (t: number) => { const p = A.clone().lerp(B, t); p.y -= sagOf(t, len); return p; };
   const n = Math.round(len / 0.24);
   for (let i = 1; i < n; i++) {
     const p = at(i / n), shade = i % 3 === 0 ? '#8a6242' : i % 3 === 1 ? '#a57a52' : '#976d48';

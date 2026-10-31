@@ -3,7 +3,8 @@
 import * as THREE from 'three';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import type { Assets } from './assets.js';
-import { isFree, route, type Point } from './paths.js';
+import { setOff, type Bridge, type Crossing } from './bridges.js';
+import { freeWalk, isFree, type Point } from './paths.js';
 import { bobOf, walkable, type Isle } from './village.js';
 import { softDot } from './world.js';
 
@@ -12,8 +13,20 @@ const CAT_H = 0.36;
 const WALK_SPEED = 0.5;
 const POP_SECONDS = 0.6;
 const CLEAR_OF_PEOPLE = 0.8;
+const CROSS_CHANCE = 0.18;
 const pick = <T>(list: readonly T[]): T => list[Math.floor(Math.random() * list.length)]!;
 const between = (a: number, b: number) => a + Math.random() * (b - a);
+
+/** A free patch of ground on the island, out of everyone's way. */
+export function freeSpot(isle: Isle, people: readonly Point[]): Point | null {
+  for (let t = 0; t < 30; t++) {
+    const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * isle.R;
+    const p = { x: Math.cos(a) * r, z: Math.sin(a) * r };
+    if (!walkable(isle, p) || !isFree(p, isle.obstacles)) continue;
+    if (people.every((q) => Math.hypot(q.x - (isle.x + p.x), q.z - (isle.z + p.z)) > CLEAR_OF_PEOPLE)) return p;
+  }
+  return null;
+}
 
 class Cat {
   private readonly root = new THREE.Group();
@@ -24,6 +37,7 @@ class Cat {
   private isle: Isle | null = null;
   private pos: Point = { x: 0, z: 0 };
   private path: Point[] = [];
+  private crossing: Crossing | null = null;
   private facing = 0;
   /** Seconds left of the present pose, of this visit, and of the time away. */
   private pose = 0;
@@ -66,23 +80,20 @@ class Cat {
     this.current = action;
   }
 
-  /** A free patch of ground on the island, out of everyone's way. */
-  private freeSpot(isle: Isle, people: readonly Point[]): Point | null {
-    for (let t = 0; t < 30; t++) {
-      const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * isle.R;
-      const p = { x: Math.cos(a) * r, z: Math.sin(a) * r };
-      if (!walkable(isle, p) || !isFree(p, isle.obstacles)) continue;
-      if (people.every((q) => Math.hypot(q.x - (isle.x + p.x), q.z - (isle.z + p.z)) > CLEAR_OF_PEOPLE)) return p;
-    }
-    return null;
-  }
-
-  private nextPose(people: readonly Point[]): void {
+  private nextPose(people: readonly Point[], bridges: readonly Bridge[]): void {
     const isle = this.isle;
     if (!isle) return;
-    const to = Math.random() < 0.45 ? this.freeSpot(isle, people) : null;
-    if (to) {
-      this.path = route(this.pos, to, isle.obstacles, (p) => walkable(isle, p));
+    const away = Math.random() < CROSS_CHANCE ? setOff(isle, this.pos, bridges) : null;
+    if (away) {
+      this.path = away.path;
+      this.crossing = away.crossing;
+      this.play('walk');
+      return;
+    }
+    const to = Math.random() < 0.45 ? freeSpot(isle, people) : null;
+    const walk = to && freeWalk(this.pos, to, isle.obstacles, (p) => walkable(isle, p));
+    if (walk) {
+      this.path = walk;
       this.play('walk');
       return;
     }
@@ -91,12 +102,12 @@ class Cat {
     this.pose = pose === 'sleep' ? between(18, 40) : between(5, 14);
   }
 
-  update(dt: number, t: number, isles: readonly Isle[], people: readonly Point[]): void {
+  update(dt: number, t: number, isles: readonly Isle[], people: readonly Point[], bridges: readonly Bridge[]): void {
     if (!this.isle) {
       this.away -= dt;
       if (this.away > 0) return;
       const isle = pick(isles);
-      const spot = this.freeSpot(isle, people);
+      const spot = freeSpot(isle, people);
       if (!spot) { this.away = 3; return; }
       this.isle = isle;
       this.pos = spot;
@@ -106,17 +117,26 @@ class Cat {
       this.facing = Math.random() * Math.PI * 2;
       this.root.visible = this.blob.visible = true;
     }
-    const isle = this.isle;
-    // Its island can go when a project drops out of the village.
-    if (!isles.includes(isle)) { this.leave(); return; }
+    // Its island, or the one it is heading for, can go when a project drops out of the village.
+    if (!isles.includes(this.isle) || (this.crossing && !isles.includes(this.crossing.to))) { this.leave(); return; }
     this.stay -= dt;
-    if (this.stay <= 0 && !this.path.length) {
+    if (this.stay <= 0 && !this.path.length && !this.crossing) {
       this.size = Math.max(0, this.size - dt / POP_SECONDS);
       if (this.size === 0) { this.leave(); return; }
     } else this.size = Math.min(1, this.size + dt / POP_SECONDS);
 
     const goal = this.path[0];
-    if (goal) {
+    if (this.crossing && !goal) {
+      this.crossing.walk(WALK_SPEED * dt);
+      this.facing = this.crossing.facing;
+      if (this.crossing.done) {
+        this.isle = this.crossing.to;
+        this.pos = { ...this.crossing.arrive };
+        this.crossing = null;
+        this.stay = Math.max(this.stay, between(30, 90));
+        this.pose = 0;
+      }
+    } else if (goal) {
       const dx = goal.x - this.pos.x, dz = goal.z - this.pos.z, d = Math.hypot(dx, dz), step = WALK_SPEED * dt;
       if (d <= step) {
         this.pos = { ...goal };
@@ -129,11 +149,13 @@ class Cat {
       if (!this.path.length) this.pose = 0;
     } else {
       this.pose -= dt;
-      if (this.pose <= 0) this.nextPose(people);
+      if (this.pose <= 0) this.nextPose(people, bridges);
     }
     this.mixer.update(dt);
-    const y = isle.y + isle.shape.heightAt(this.pos.x, this.pos.z) + bobOf(t, isle.phase);
-    const wx = isle.x + this.pos.x, wz = isle.z + this.pos.z;
+    const isle = this.isle;
+    const over = this.crossing && !this.path.length ? this.crossing.at(t) : null;
+    const y = over?.y ?? isle.y + isle.shape.heightAt(this.pos.x, this.pos.z) + bobOf(t, isle.phase);
+    const wx = over?.x ?? isle.x + this.pos.x, wz = over?.z ?? isle.z + this.pos.z;
     this.root.position.set(wx, y, wz);
     let turn = this.facing - this.root.rotation.y;
     while (turn > Math.PI) turn -= Math.PI * 2;
@@ -147,13 +169,14 @@ class Cat {
   private leave(): void {
     this.isle = null;
     this.path = [];
+    this.crossing = null;
     this.size = 0;
     this.away = between(12, 45);
     this.root.visible = this.blob.visible = false;
   }
 
-  foot(): { x: number; y: number; z: number } | null {
-    return this.isle ? { x: this.root.position.x, y: this.root.position.y, z: this.root.position.z } : null;
+  foot(): { x: number; y: number; z: number; facing: number; overPlanks: boolean } | null {
+    return this.isle ? { x: this.root.position.x, y: this.root.position.y, z: this.root.position.z, facing: this.facing, overPlanks: !this.path.length && !!this.crossing?.overPlanks } : null;
   }
 }
 
@@ -171,12 +194,12 @@ export class Cats {
     }
   }
 
-  update(dt: number, t: number, isles: readonly Isle[], people: readonly Point[]): void {
-    for (const cat of this.list) cat.update(dt, t, isles, people);
+  update(dt: number, t: number, isles: readonly Isle[], people: readonly Point[], bridges: readonly Bridge[]): void {
+    for (const cat of this.list) cat.update(dt, t, isles, people, bridges);
   }
 
   /** Where the cats are, for the walking check. */
-  feet(): { x: number; y: number; z: number }[] {
+  feet(): { x: number; y: number; z: number; facing: number; overPlanks: boolean }[] {
     return this.list.flatMap((c) => c.foot() ?? []);
   }
 }

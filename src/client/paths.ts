@@ -7,6 +7,9 @@ export interface Obstacle extends Point { r: number }
 export const BODY = 0.2;
 const RING = 8;
 
+/** How far a rope bridge of this length hangs below its straight line, t of the way along. */
+export const sagOf = (t: number, len: number) => Math.sin(t * Math.PI) * len * 0.09;
+
 /** A solid rectangle as a grid of circles; the gaps between them are narrower than a person. */
 export function boxCircles(cx: number, cz: number, facing: number, width: number, depth: number): Obstacle[] {
   const r = 0.62, out: Obstacle[] = [];
@@ -50,8 +53,13 @@ function blocks(o: Obstacle, a: Point, b: Point): boolean {
   return Math.hypot(a.x + vx * t - o.x, a.z + vz * t - o.z) < reach;
 }
 
-/** The waypoints of the shortest free walk, ending at `to`. Goes straight if nothing leads there. */
+/** The waypoints of the shortest walk to `to`. Goes straight if nothing leads there, as someone with work to reach must. */
 export function route(from: Point, to: Point, obstacles: readonly Obstacle[], allowed: (p: Point) => boolean = () => true): Point[] {
+  return freeWalk(from, to, obstacles, allowed) ?? [to];
+}
+
+/** The waypoints of the shortest free walk to `to`, or null if nothing leads there. */
+export function freeWalk(from: Point, to: Point, obstacles: readonly Obstacle[], allowed: (p: Point) => boolean = () => true): Point[] | null {
   const clear = (a: Point, b: Point) => !obstacles.some((o) => blocks(o, a, b));
   if (clear(from, to)) return [to];
   const nodes: Point[] = [from, to];
@@ -68,7 +76,7 @@ export function route(from: Point, to: Point, obstacles: readonly Obstacle[], al
   for (;;) {
     let u = -1;
     for (let i = 0; i < nodes.length; i++) if (!done[i] && dist[i]! < Infinity && (u < 0 || dist[i]! < dist[u]!)) u = i;
-    if (u < 0) return [to];
+    if (u < 0) return null;
     if (u === 1) break;
     done[u] = true;
     const a = nodes[u]!;

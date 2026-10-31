@@ -2,6 +2,7 @@
 // batches that are rebuilt only when the set of islands changes.
 import * as THREE from 'three';
 import type { Assets, Model } from './assets.js';
+import type { Bridge } from './bridges.js';
 import { BODY, boxCircles, isFree, pushOut, type Obstacle, type Point } from './paths.js';
 import { hashString, labelTexture, makeIsland, makeRng, merge, ropeBridge, type IslandShape } from './world.js';
 export type { Point } from './paths.js';
@@ -68,6 +69,7 @@ export class Village {
   private plans = new Map<string, Plan>();
   private batches: THREE.Object3D[] = [];
   private bridge: THREE.Mesh | null = null;
+  private spans: Bridge[] = [];
   private activeKey = '';
   private readonly caster = new THREE.Raycaster();
   private readonly terrainMat = drifting(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }), false);
@@ -102,6 +104,19 @@ export class Village {
   isle(id: string): Isle | undefined { return this.plans.get(id)?.isle; }
   tent(): Isle | undefined { return this.plans.get('tent')?.isle; }
   isles(): Isle[] { return [this.centre, ...[...this.plans.values()].map((p) => p.isle)]; }
+  bridges(): readonly Bridge[] { return this.spans; }
+
+  /** How far above the planks this spot is, or null if there are no planks under it, for the walking check. */
+  gapToPlanks(x: number, y: number, z: number): number | null {
+    if (!this.bridge) return null;
+    // Planks have gaps between them and sit level on a slope, so the nearest of several rays counts.
+    let best: number | null = null;
+    for (const [dx, dz] of [[0, 0], [0.09, 0], [-0.09, 0], [0, 0.09], [0, -0.09]] as const) {
+      const hit = new THREE.Raycaster(new THREE.Vector3(x + dx, y + 0.3, z + dz), new THREE.Vector3(0, -1, 0), 0, 0.8).intersectObject(this.bridge, false)[0];
+      if (hit && (best === null || Math.abs(hit.distance - 0.3) < Math.abs(best))) best = hit.distance - 0.3;
+    }
+    return best;
+  }
 
   /** The island a ray points at: the ground it hits, or else the one it passes closest to, such as over a roof. */
   isleAt(ray: THREE.Ray): Isle | null {
@@ -234,6 +249,7 @@ export class Village {
       this.bridge.geometry.dispose();
       this.bridge = null;
     }
+    this.spans = [];
     const homes = [...this.plans.values()].map((p) => p.isle).sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
     if (!homes.length) return;
     const linked = [this.centre];
@@ -244,6 +260,7 @@ export class Village {
       const ang = Math.atan2(a.z - best.z, a.x - best.x), ra = best.shape.radiusAt(ang) * 0.86, rb = a.shape.radiusAt(ang + Math.PI) * 0.86;
       const ax = Math.cos(ang) * ra, az = Math.sin(ang) * ra, bx = -Math.cos(ang) * rb, bz = -Math.sin(ang) * rb;
       parts.push(ropeBridge([best.x + ax, best.y + best.shape.heightAt(ax, az) + 0.02, best.z + az], [a.x + bx, a.y + a.shape.heightAt(bx, bz) + 0.02, a.z + bz]));
+      this.spans.push({ a: best, b: a, aEnd: { x: ax, z: az }, bEnd: { x: bx, z: bz } });
       linked.push(a);
     }
     this.bridge = new THREE.Mesh(merge(parts), this.bridgeMat);

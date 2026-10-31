@@ -5,6 +5,7 @@ import { loadAssets } from './assets.js';
 import { Cats } from './cats.js';
 import { demoSnapshot } from './demo.js';
 import { Dragons } from './dragons.js';
+import { TungTung } from './tungtung.js';
 import { Panel } from './panel.js';
 import { DayNight } from './sky.js';
 import { Village, bobOf, type Isle } from './village.js';
@@ -152,6 +153,7 @@ const village = new Village(assets, scene, sky.night, time, softDot('rgba(255,22
 const people = new People(assets, scene);
 const cats = new Cats(assets, scene);
 const dragons = new Dragons(assets, scene);
+const tung = new TungTung(assets, scene);
 clouds();
 drifters();
 
@@ -310,9 +312,10 @@ function tick(): void {
   fallTime.value = elapsed;
   village.update(elapsed);
   people.update(dt, elapsed, camera);
-  const isles = village.isles(), feet = people.feet();
-  cats.update(dt, elapsed, isles, feet);
+  const isles = village.isles(), feet = people.feet(), bridges = village.bridges();
+  cats.update(dt, elapsed, isles, feet, bridges);
   dragons.update(dt, elapsed, isles, feet);
+  tung.update(dt, elapsed, isles, feet, bridges);
   pond.position.y = -0.09 + bobOf(elapsed, -1);
   // Shadows follow the slow sun and only need a refresh now and then.
   if (village.dirty || count < 4 || count % 90 === 0) {
@@ -372,14 +375,22 @@ if (debug) {
     return { x: ((p.x + 1) / 2) * innerWidth, y: ((1 - p.y) / 2) * innerHeight, wx: isle.x, wz: isle.z };
   };
   (window as unknown as { __dragons: unknown }).__dragons = () => dragons.states();
+  (window as unknown as { __tung: unknown }).__tung = () => tung.state();
+  (window as unknown as { __catFeet: unknown }).__catFeet = () => cats.feet();
+  (window as unknown as { __lookAt: unknown }).__lookAt = (x: number, y: number, z: number, away: number, angle: number) => {
+    controls.target.set(x, y, z);
+    camera.position.set(x + Math.sin(angle) * away, y + away * 0.2, z + Math.cos(angle) * away);
+  };
   // For scripts/walk.mjs: who is standing inside a solid model right now.
   (window as unknown as { __inside: unknown }).__inside = () => {
     const spots = people.feet();
     const hits = spots.map((s) => ({ id: s.id, assets: village.solidsAt(s.x, s.y, s.z) })).filter((h) => h.assets.length);
     const close = spots.flatMap((a, i) => spots.slice(i + 1).filter((b) => Math.hypot(a.x - b.x, a.z - b.z) < 0.4).map((b) => a.moving || b.moving));
     const catFeet = cats.feet();
-    const catHits = catFeet.map((s, i) => ({ id: `cat-${i}`, assets: village.solidsAt(s.x, s.y, s.z) })).filter((h) => h.assets.length);
-    return { people: spots.length, hits: [...hits, ...catHits], crowded: close.length, standing: close.filter((m) => !m).length, cats: catFeet.length };
+    const roamers = [...catFeet.map((s, i) => ({ s, id: `cat-${i}` })), ...[tung.state()].flatMap((s) => (s ? [{ s, id: 'tung' }] : []))];
+    const catHits = roamers.map(({ s, id }) => ({ id, assets: village.solidsAt(s.x, s.y, s.z) })).filter((h) => h.assets.length);
+    const onBridge = roamers.filter(({ s }) => s.overPlanks).map(({ s, id }) => ({ id, gap: village.gapToPlanks(s.x, s.y, s.z) }));
+    return { people: spots.length, hits: [...hits, ...catHits], crowded: close.length, standing: close.filter((m) => !m).length, cats: catFeet.length, onBridge };
   };
 }
 if (DEMO) {

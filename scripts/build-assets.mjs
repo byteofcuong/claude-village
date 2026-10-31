@@ -1,12 +1,13 @@
 // Builds assets/generated from the source packs in assets-src. Neither folder is committed:
 // see assets/LICENSES.md for where to get each pack.
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { NodeIO } from '@gltf-transform/core';
+import { Document, NodeIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { dedup, prune, simplify, textureCompress, weld } from '@gltf-transform/functions';
 import { MeshoptSimplifier } from 'meshoptimizer';
 import sharp from 'sharp';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 
 const root = resolve(import.meta.dirname, '..');
 const src = join(root, 'assets-src');
@@ -17,7 +18,8 @@ const nature = join(src, 'Quaternius_Nature', 'glTF');
 const village = join(src, 'WizP_Village', 'VillagePack.glb');
 const cat = join(src, 'Vuena_Pets', 'GLB', 'animal_cat.glb');
 const dragon = join(src, 'Ashwing_Drake_Lite', 'Ashwing_Drake_Lite', 'Ashwing_Drake_Lite.glb');
-for (const need of [adv, anim, nature, village, cat, dragon]) {
+const tung = join(src, 'TungTung', 'zip');
+for (const need of [adv, anim, nature, village, cat, dragon, tung]) {
   if (!existsSync(need)) {
     console.error(`Missing source pack: ${need}\nSee assets/LICENSES.md.`);
     process.exit(2);
@@ -25,12 +27,59 @@ for (const need of [adv, anim, nature, village, cat, dragon]) {
 }
 
 rmSync(out, { recursive: true, force: true });
-for (const d of ['chars', 'anims', 'props', 'nature', 'village', 'cats', 'dragons']) mkdirSync(join(out, d), { recursive: true });
+for (const d of ['chars', 'anims', 'props', 'nature', 'village', 'cats', 'dragons', 'tung']) mkdirSync(join(out, d), { recursive: true });
 
 await MeshoptSimplifier.ready;
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
 const tris = (doc) => doc.getRoot().listMeshes().reduce((s, m) => s + m.listPrimitives().reduce((a, p) => a + (p.getIndices() ?? p.getAttribute('POSITION')).getCount() / 3, 0), 0);
 const report = {};
+// FBXLoader asks the browser to fetch textures; here the texture is read from disk instead.
+globalThis.document ??= { createElementNS: () => ({ addEventListener() {}, removeEventListener() {}, style: {} }) };
+const readArrayBuffer = (file) => { const b = readFileSync(file); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
+
+/** A skinned FBX scene as a glTF document. Every mesh shares one texture. */
+function fbxToDoc(fbx, png) {
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+  const material = doc.createMaterial('Mat').setRoughnessFactor(1).setMetallicFactor(0)
+    .setBaseColorTexture(doc.createTexture('tex').setMimeType('image/png').setImage(png));
+  const accessor = (type, array) => doc.createAccessor().setType(type).setArray(array).setBuffer(buffer);
+  const nodes = new Map();
+  const copy = (o) => {
+    const node = doc.createNode(o.name).setTranslation(o.position.toArray()).setRotation(o.quaternion.toArray()).setScale(o.scale.toArray());
+    nodes.set(o, node);
+    for (const c of o.children) if (!c.isMesh) node.addChild(copy(c));
+    return node;
+  };
+  scene.addChild(copy(fbx));
+  fbx.updateMatrixWorld(true);
+  fbx.traverse((m) => {
+    if (!m.isSkinnedMesh) return;
+    const { position, normal, uv, skinIndex, skinWeight } = m.geometry.attributes;
+    const weights = Float32Array.from(skinWeight.array);
+    for (let i = 0; i < weights.length; i += 4) {
+      const sum = weights[i] + weights[i + 1] + weights[i + 2] + weights[i + 3];
+      for (let k = 0; k < 4; k++) weights[i + k] /= sum || 1;
+    }
+    // FBX counts texture rows from the bottom, glTF from the top.
+    const uvs = Float32Array.from(uv.array);
+    for (let i = 1; i < uvs.length; i += 2) uvs[i] = 1 - uvs[i];
+    const prim = doc.createPrimitive().setMaterial(material)
+      .setAttribute('POSITION', accessor('VEC3', Float32Array.from(position.array)))
+      .setAttribute('NORMAL', accessor('VEC3', Float32Array.from(normal.array)))
+      .setAttribute('TEXCOORD_0', accessor('VEC2', uvs))
+      .setAttribute('JOINTS_0', accessor('VEC4', Uint16Array.from(skinIndex.array)))
+      .setAttribute('WEIGHTS_0', accessor('VEC4', weights));
+    // three skins by bone * boneInverse * bindMatrix, glTF by joint * inverseBind.
+    const binds = new Float32Array(m.skeleton.bones.length * 16);
+    m.skeleton.boneInverses.forEach((inverse, i) => inverse.clone().multiply(m.bindMatrix).toArray(binds, i * 16));
+    const skin = doc.createSkin(m.name).setInverseBindMatrices(accessor('MAT4', binds));
+    for (const b of m.skeleton.bones) skin.addJoint(nodes.get(b));
+    scene.addChild(doc.createNode(m.name).setMesh(doc.createMesh(m.name).addPrimitive(prim)).setSkin(skin));
+  });
+  return doc;
+}
 
 // Characters: no capes or headgear, so a nón lá fits; at most 2.9k triangles.
 const CHAR_TARGET = 2900;
@@ -112,6 +161,22 @@ await dragonDoc.transform(prune({ keepLeaves: true, keepAttributes: true }));
 await dragonDoc.transform(weld(), simplify({ simplifier: MeshoptSimplifier, ratio: 4500 / tris(dragonDoc), error: 0.03 }), textureCompress({ encoder: sharp, targetFormat: 'webp', resize: [1024, 1024], quality: 84 }));
 await io.write(join(out, 'dragons', 'dragon.glb'), dragonDoc);
 report.dragon = tris(dragonDoc);
+
+// Tung Tung Tung Sahur comes as FBX only, so its meshes and bones are copied into a glTF by hand.
+const tungDoc = fbxToDoc(new FBXLoader().parse(readArrayBuffer(join(tung, 'tungtungsahur.fbx')), ''), readFileSync(join(tung, 'tex.png')));
+await tungDoc.transform(weld());
+const tungBefore = tris(tungDoc);
+// Lighter than the villagers: the scene has little room left under its 300k budget.
+const TUNG_TARGET = 1900;
+let tungError = 0.002;
+while (tris(tungDoc) > TUNG_TARGET && tungError < 0.3) {
+  await tungDoc.transform(simplify({ simplifier: MeshoptSimplifier, ratio: Math.min(0.95, TUNG_TARGET / tris(tungDoc)), error: tungError }));
+  tungError *= 1.6;
+}
+if (tris(tungDoc) > 3000) throw new Error(`Tung Tung is over the character budget: ${tris(tungDoc)}`);
+await tungDoc.transform(prune({ keepLeaves: true, keepAttributes: true }), textureCompress({ encoder: sharp, targetFormat: 'webp', resize: [768, 768], quality: 86 }));
+await io.write(join(out, 'tung', 'tung.glb'), tungDoc);
+report.tung = `${tungBefore} -> ${tris(tungDoc)}`;
 
 const v = await io.read(village);
 const vb = tris(v);

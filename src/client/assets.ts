@@ -15,6 +15,7 @@ export interface Assets {
   props: Map<string, THREE.Object3D>;
   cat: { scene: THREE.Object3D; clips: Map<string, THREE.AnimationClip>; height: number; variants: THREE.Material[] };
   dragon: { scene: THREE.Object3D; clips: Map<string, THREE.AnimationClip>; variants: THREE.Material[] };
+  tung: { scene: THREE.Object3D; height: number };
   leaf: { pink: Map<THREE.Texture, THREE.Texture>; gold: Map<THREE.Texture, THREE.Texture> };
 }
 
@@ -73,7 +74,7 @@ const VILLAGE = ['building_1', 'building_3', 'shop', 'shrine', 'arch_2', 'brazie
 const CLOTH: [number, number][] = [[0.62, 0.55], [0.04, 0.55], [0.48, 0.45], [0.12, 0.65]];
 
 export async function loadAssets(onProgress: (done: number, total: number) => void): Promise<Assets> {
-  const total = NATURE.length + 1 + 6 + 4 + 4 + 1 + 1;
+  const total = NATURE.length + 1 + 6 + 4 + 4 + 1 + 1 + 1;
   let done = 0;
   const tick = <T>(p: Promise<T>) => p.then((v) => { onProgress(++done, total); return v; });
 
@@ -175,6 +176,10 @@ export async function loadAssets(onProgress: (done: number, total: number) => vo
   if (ashen.map) crimson.map = hsl(imageOf(ashen.map), (h) => ({ h: 0.99 + h.l * 0.07, s: 0.62, l: h.l * 0.72 }), ashen.map, 1024);
   const dragon = { scene: dragonFile.scene, clips: new Map(dragonFile.animations.map((c) => [c.name, c] as const)), variants: [ashen, crimson] };
 
+  const tungFile = await tick(loader.loadAsync('tung/tung.glb'));
+  tungFile.scene.updateMatrixWorld(true);
+  const tung = { scene: tungFile.scene, height: new THREE.Box3().setFromObject(tungFile.scene).getSize(new THREE.Vector3()).y };
+
   // Blossom and apricot canopies come from the same leaves, recoloured.
   const leaf = { pink: new Map<THREE.Texture, THREE.Texture>(), gold: new Map<THREE.Texture, THREE.Texture>() };
   for (const model of nature.values()) for (const part of model.parts) {
@@ -183,5 +188,5 @@ export async function loadAssets(onProgress: (done: number, total: number) => vo
     leaf.pink.set(map, hsl(imageOf(map), (h) => ({ h: 0.95, s: 0.78, l: Math.min(0.9, h.l + 0.56) }), map));
     leaf.gold.set(map, hsl(imageOf(map), (h) => ({ h: 0.135, s: 0.95, l: Math.min(0.78, h.l + 0.4) }), map));
   }
-  return { nature, village, roofMaps, characters, clips, props, cat, dragon, leaf };
+  return { nature, village, roofMaps, characters, clips, props, cat, dragon, tung, leaf };
 }

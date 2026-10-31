@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY, boxCircles, isFree, pushOut, route, type Obstacle, type Point } from '../src/client/paths.js';
+import { BODY, boxCircles, freeWalk, isFree, pushOut, route, type Obstacle, type Point } from '../src/client/paths.js';
 
 const gapTo = (o: Obstacle, a: Point, b: Point) => {
   const vx = b.x - a.x, vz = b.z - a.z, len2 = vx * vx + vz * vz;
@@ -50,6 +50,17 @@ describe('route', () => {
     const to = { x: 3, z: 0 };
     expect(route({ x: 0, z: 0 }, to, [{ x: 1.5, z: 0, r: 1 }], () => false)).toEqual([to]);
     expect(route({ x: 1, z: 0 }, to, [{ x: 1, z: 0, r: 0.5 }])).toEqual([to]);
+  });
+});
+
+describe('freeWalk', () => {
+  it('admits when no way exists instead of walking through', () => {
+    expect(freeWalk({ x: 0, z: 0 }, { x: 3, z: 0 }, [{ x: 1.5, z: 0, r: 1 }], () => false)).toBeNull();
+  });
+
+  it('agrees with route when a way exists', () => {
+    const rock = [{ x: 1, z: 0, r: 0.5 }], from = { x: 0, z: 0 }, to = { x: 2, z: 0 };
+    expect(freeWalk(from, to, rock)).toEqual(route(from, to, rock));
   });
 });
 

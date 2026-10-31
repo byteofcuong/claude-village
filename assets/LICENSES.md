@@ -10,6 +10,7 @@ Model files are not in this repository. Download these packs into `assets-src/`,
 | Cute Pets & Wildlife Free Sample | Popyca (Vuena) | https://vuena.itch.io/blocky-pets-free | CC0 1.0 | Cats |
 | Ashwing Drake Lite | Literock Studios | https://literock-studios.itch.io/ashwing-drake-lite | Free licence in the zip: free in any end product, may be modified, not to be redistributed or re-uploaded, not for machine-learning training. Its author states parts were made with generative AI tools (Meshy). | Dragons |
 | Stylized Asian Village | WizP | https://wizp.itch.io/stylized-asian-village | "can be use for any propose, commercial or not, just can't be resold" | Houses, props |
+| TUNG TUNG TUNG SAHUR MEME | emorytan | https://www.cgtrader.com/free-3d-models/character/other/tungtungtung-sahur-meme | CGTrader Royalty Free License (no AI): not to be redistributed in the downloaded form, not for machine-learning training. | Tung Tung Tung Sahur |
 
 Expected layout:
 
@@ -20,6 +21,7 @@ assets-src/Quaternius_Nature/glTF/  (and Textures/)
 assets-src/WizP_Village/VillagePack.glb
 assets-src/Vuena_Pets/GLB/animal_cat.glb
 assets-src/Ashwing_Drake_Lite/Ashwing_Drake_Lite/Ashwing_Drake_Lite.glb
+assets-src/TungTung/zip/tungtungsahur.fbx  (and tex.png)
 ```
 
 Ashwing Drake by Literock Studios. Its licence forbids sharing the model files, so never commit them or `assets/generated/`.
