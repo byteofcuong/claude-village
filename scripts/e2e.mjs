@@ -88,7 +88,7 @@ try {
 
   rmSync(registry);
   check('villager sleeps when its process ends', await waitFor(`window.__snapshot()?.houses[0]?.villagers[0]?.state === 'asleep'`));
-  check('sleeping villager lies down', await waitFor(`window.__clipOf(window.__snapshot().houses[0].villagers[0].id) === 'Lie_Idle'`));
+  check('sleeping villager lies down', await waitFor(`window.__clipOf(window.__snapshot().houses[0].villagers[0].id) === 'Lie_Idle'`), `after ${lastWait} ms`);
   check('the panel closes on Escape', await page.keyboard.press('Escape').then(() => waitFor(`document.querySelector('.panel').hidden`)));
   const houseId = snap.houses[0].id;
   check('clicking a villager also flies to their island', await waitFor(`window.__view().focused === ${JSON.stringify(houseId)} && !window.__view().flying`));

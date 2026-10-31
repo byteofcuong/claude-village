@@ -12,6 +12,9 @@ const COUNT = 2;
 const SCALE = 0.38;
 const SPEED = 5.5;
 const MAX_TURN = 0.75;
+const EASE = 1.5;
+/** The file's 0.8 s wingbeat looks frantic on something this big. */
+const WINGBEAT = 0.7;
 const BODY_ROOM = 1.05;
 const CLEAR_OF_PEOPLE = 1.7;
 const TAKEOFF_SECONDS = 2.4;
@@ -36,6 +39,8 @@ class Dragon {
   private heading = Math.random() * Math.PI * 2;
   private bank = 0;
   private pitch = 0;
+  private turnRate = 0;
+  private climbRate = 0;
   private wander = new THREE.Vector3();
   private isle: Isle | null = null;
   private seat: (Obstacle & { facing: number }) | null = null;
@@ -77,7 +82,7 @@ class Dragon {
     action.reset();
     action.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
     action.clampWhenFinished = once;
-    action.timeScale = reverse ? -1 : 1;
+    action.timeScale = reverse ? -1 : name === 'fly_loop' ? WINGBEAT : 1;
     if (reverse) action.time = clip.duration;
     action.play();
     if (this.current && this.current !== action) this.current.crossFadeTo(action, 0.45, false);
@@ -169,10 +174,14 @@ class Dragon {
     let turn = want - this.heading;
     while (turn > Math.PI) turn -= Math.PI * 2;
     while (turn < -Math.PI) turn += Math.PI * 2;
-    const rate = THREE.MathUtils.clamp(turn, -MAX_TURN, MAX_TURN);
+    // Ease into a new turn or climb: a fresh target must not jerk the body round in one frame.
+    const ease = Math.min(1, dt * EASE);
+    this.turnRate += (THREE.MathUtils.clamp(turn, -MAX_TURN, MAX_TURN) - this.turnRate) * ease;
+    const rate = this.turnRate;
     this.heading += rate * dt;
     this.bank += (-rate * 0.75 - this.bank) * Math.min(1, dt * 2);
-    const climb = THREE.MathUtils.clamp(this.wander.y - this.pos.y, -1.2, 1.2);
+    this.climbRate += (THREE.MathUtils.clamp(this.wander.y - this.pos.y, -1.2, 1.2) - this.climbRate) * ease;
+    const climb = this.climbRate;
     this.pitch += (-climb * 0.1 - this.pitch) * Math.min(1, dt * 2);
     this.pos.x += Math.sin(this.heading) * SPEED * dt;
     this.pos.z += Math.cos(this.heading) * SPEED * dt;

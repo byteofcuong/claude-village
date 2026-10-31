@@ -291,11 +291,13 @@ const currentHour = (dt: number) => {
 };
 const labelOf = (h: number) => (h < 5 ? 'Đêm' : h < 8 ? 'Sáng sớm' : h < 11 ? 'Sáng' : h < 14 ? 'Trưa' : h < 17.5 ? 'Chiều' : h < 19.5 ? 'Hoàng hôn' : 'Tối');
 
-const clock = new THREE.Clock();
-let frames = 0, last = performance.now(), count = 0, elapsed = 0, slowSeconds = 0;
+let frames = 0, last = performance.now(), count = 0, elapsed = 0, slowSeconds = 0, frameAt = performance.now();
 (window as unknown as { __stats: unknown }).__stats = { ready: false };
-function tick(): void {
-  const dt = Math.min(clock.getDelta(), 0.1);
+function tick(at: number): void {
+  // The frame's own timestamp, not the clock when this code happens to run: anything that moves fast
+  // would otherwise shake by however late each frame started.
+  const dt = Math.min(Math.max(0, at - frameAt) / 1000, 0.1);
+  frameAt = at;
   elapsed += dt;
   count++;
   if (flight.active) {
@@ -335,8 +337,10 @@ function tick(): void {
     clockText.textContent = `${labelOf(hour)} ${String(Math.floor(hour)).padStart(2, '0')}:${String(Math.floor((hour % 1) * 60)).padStart(2, '0')}`;
     // On a weak GPU, trade a little sharpness for smoothness rather than stutter: first down to the
     // screen's own pixels, and below that only when the game would otherwise be choppy.
+    // Under about 5 FPS the browser is throttling a window it thinks nobody is watching, which says
+    // nothing about the GPU, and the sharpness lost would never come back.
     const floor = fps < 28 ? 0.7 : Math.min(devicePixelRatio, 1);
-    slowSeconds = fps < 58 ? slowSeconds + 1 : 0;
+    slowSeconds = fps < 58 && fps > 5 ? slowSeconds + 1 : 0;
     if (slowSeconds >= 5 && pixelRatio > floor) {
       pixelRatio = Math.max(floor, pixelRatio - 0.125);
       renderer.setPixelRatio(pixelRatio);
@@ -390,7 +394,7 @@ if (debug) {
     const roamers = [...catFeet.map((s, i) => ({ s, id: `cat-${i}` })), ...[tung.state()].flatMap((s) => (s ? [{ s, id: 'tung' }] : []))];
     const catHits = roamers.map(({ s, id }) => ({ id, assets: village.solidsAt(s.x, s.y, s.z) })).filter((h) => h.assets.length);
     const onBridge = roamers.filter(({ s }) => s.overPlanks).map(({ s, id }) => ({ id, gap: village.gapToPlanks(s.x, s.y, s.z) }));
-    return { people: spots.length, hits: [...hits, ...catHits], crowded: close.length, standing: close.filter((m) => !m).length, cats: catFeet.length, onBridge };
+    return { people: spots.length, hits: [...hits, ...catHits], crowded: close.length, standing: close.filter((m) => !m).length, cats: catFeet.length, onBridge, stuck: people.stuck() };
   };
 }
 if (DEMO) {
@@ -400,4 +404,4 @@ if (DEMO) {
   setInterval(refresh, 3000);
 } else connect();
 loading.remove();
-tick();
+requestAnimationFrame(tick);

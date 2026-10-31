@@ -4,7 +4,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import type { Activity, VillagerDTO, VillagerState } from '../shared/types.js';
 import type { Assets } from './assets.js';
 import { CHATS, lineFor, type LineKey } from './lines.js';
-import { isFree, pushOut, route, BODY } from './paths.js';
+import { freeWalk, isFree, pushOut, route, BODY } from './paths.js';
 import { bobOf, walkable, type Isle, type Point, type StationName } from './village.js';
 import { bubbleTexture, hashString, softDot, speechTexture } from './world.js';
 
@@ -41,6 +41,10 @@ const IDLE_SWAP_MS = 18_000;
 const HOLD_MS = 5_000;
 const SPACING = 0.62;
 const GIVE_UP_MS = 20_000;
+/** Getting no further than this counts as walking on the spot. */
+const MOVED = 0.15;
+const STUCK_MS = 1_200;
+const MAX_STUCK_TRIES = 3;
 const SPEECH_MS = 3_600;
 const SPEECH_RANGE = 32;
 const MAX_SPEAKERS = 5;
@@ -62,6 +66,9 @@ class Villager {
   private path: Point[] = [];
   private repathAt = 0;
   private giveUpAt = 0;
+  private movedFrom: Point = { x: 0, z: 0 };
+  private movedAt = 0;
+  private stuckTries = 0;
   private patrolIndex: number;
   private act: Act;
   private want: Act;
@@ -217,6 +224,9 @@ class Villager {
       this.path = route(this.pos, this.target, this.isle.obstacles, (p) => walkable(this.isle, p));
       this.repathAt = now + 4_000;
       this.giveUpAt = now + GIVE_UP_MS;
+      this.movedFrom = { ...this.pos };
+      this.movedAt = now;
+      this.stuckTries = 0;
       this.setProp(undefined);
       this.play('Walking_A');
     } else this.arrive();
@@ -246,15 +256,48 @@ class Villager {
 
   lookAt(p: Point): void { this.facing = Math.atan2(p.x - this.pos.x, p.z - this.pos.z); }
 
+  private endWalk(): void {
+    if (this.act.patrol) {
+      this.walking = false;
+      this.play('Walking_A');
+      this.setProp(this.act.prop);
+    } else this.arrive();
+  }
+
+  /** Getting nowhere: find a way again, and failing that, get on with the job right here. */
+  private unstick(now: number): void {
+    this.movedAt = now;
+    this.stuckTries++;
+    // A dragon may have come down on the very spot.
+    if (!isFree(this.target, this.isle.obstacles)) this.target = this.spotFor(this.act);
+    const way = this.stuckTries < MAX_STUCK_TRIES ? freeWalk(this.pos, this.target, this.isle.obstacles, (p) => walkable(this.isle, p)) : null;
+    if (way) {
+      this.path = way;
+      this.repathAt = now + 4_000;
+      return;
+    }
+    this.target = { ...this.pos };
+    this.path = [];
+    this.endWalk();
+  }
+
   /** One step along the path, stepping aside for anyone in the way. */
   private walkStep(dt: number, now: number): void {
+    if (Math.hypot(this.pos.x - this.movedFrom.x, this.pos.z - this.movedFrom.z) > MOVED) {
+      this.movedFrom = { ...this.pos };
+      this.movedAt = now;
+      this.stuckTries = 0;
+    } else if (now - this.movedAt > STUCK_MS) {
+      this.unstick(now);
+      if (!this.walking) return;
+    }
     // Boxed in by others: better to appear at the job than to shuffle in place forever.
     if (now > this.giveUpAt) {
       this.path = [{ ...this.target }];
       this.pos = { ...this.target };
     }
     if (now > this.repathAt) {
-      this.path = route(this.pos, this.target, this.isle.obstacles, (p) => walkable(this.isle, p));
+      this.path = freeWalk(this.pos, this.target, this.isle.obstacles, (p) => walkable(this.isle, p)) ?? this.path;
       this.repathAt = now + 4_000;
     }
     const goal = this.path[0] ?? this.target, step = WALK_SPEED * dt;
@@ -264,16 +307,13 @@ class Villager {
       this.placeOnGround();
       this.path.shift();
       if (this.path.length) return;
-      if (this.act.patrol) {
-        this.walking = false;
-        this.play('Walking_A');
-        this.setProp(this.act.prop);
-      } else this.arrive();
+      this.endWalk();
       return;
     }
     const ux = dx / d, uz = dz / d;
     let sx = ux, sz = uz;
-    for (const o of this.neighbours()) {
+    // Two people stepping aside for each other can dance forever, so one who is stuck walks on.
+    if (!this.stuckTries) for (const o of this.neighbours()) {
       const rx = o.pos.x - this.pos.x, rz = o.pos.z - this.pos.z, r = Math.hypot(rx, rz);
       if (r > 0.8 || r < 1e-3 || (rx * ux + rz * uz) / r < 0.1) continue;
       const side = -rx * uz + rz * ux >= 0 ? -1 : 1, push = ((0.8 - r) / 0.8) * 1.6;
@@ -328,6 +368,11 @@ class Villager {
   speaking(): boolean { return this.speech !== null; }
   // A patroller only pauses for the frame between two legs of its walk.
   moving(): boolean { return this.walking || !!this.act.patrol; }
+  /** How long this walker has been getting nowhere, for the walking check. */
+  stuckFor(now: number): number {
+    if (!this.walking) return 0;
+    return now - this.movedAt;
+  }
   isNear(o: Villager, within: number): boolean { return Math.hypot(o.pos.x - this.pos.x, o.pos.z - this.pos.z) < within; }
   delaySpeech(now: number): void { this.lineAt = Math.max(this.lineAt, now + 1_500); }
 
@@ -504,6 +549,12 @@ export class People {
   /** Where everyone stands, for the walking check. */
   feet(): { id: string; x: number; y: number; z: number; moving: boolean }[] {
     return [...this.list].map(([id, v]) => ({ id, x: v.root.position.x, y: v.groundY, z: v.root.position.z, moving: v.moving() }));
+  }
+
+  /** Walkers getting nowhere, for the walking check. */
+  stuck(): { id: string; ms: number }[] {
+    const now = performance.now();
+    return [...this.list].flatMap(([id, v]) => { const ms = v.stuckFor(now); return ms > 1000 ? [{ id, ms }] : []; });
   }
 
   /** Finds the villager nearest a ray, with a generous radius so small figures stay clickable. */
